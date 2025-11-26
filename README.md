@@ -1,4 +1,4 @@
-# Witness: Threshold Witness Timestamping System
+# 🙌 Witness: Threshold Witness Timestamping System
 
 **Prove when something existed—without trusting any single party, and without needing a blockchain.**
 
@@ -15,15 +15,15 @@ Witness is a federated witness network that provides threshold-signed timestamps
 
 ## Design Philosophy
 
-Witness has three operating modes:
+Witness has two operating modes:
 
 1. **Minimal (single network):** One set of witnesses with threshold signatures. Good for development and low-stakes use.
 
 2. **Federated (cross-network anchoring):** Multiple independent Witness networks periodically witness each other's merkle roots. This is the default "secure" mode.
 
-3. **Hardened (external anchors):** Additional anchoring to Certificate Transparency logs, Internet Archive, DNS TXT records, physical escrow.
+Mode 3 is planned for a future release.
 
-**This implementation provides both Mode 1 (Minimal) and Mode 2 (Federated).** Mode 3 is planned for future releases.
+3. **Hardened (external anchors):** Additional anchoring to Certificate Transparency logs, Internet Archive, DNS TXT records, physical escrow.
 
 ## Architecture
 
@@ -428,63 +428,10 @@ CLI:
 cargo run -p witness-cli -- --gateway http://localhost:8080 timestamp --file README.md
 ```
 
-## Roadmap
-
-### Phase 1: Minimal Viable Timestamp (Mode 1) ✅
-
-- [x] Core types and Ed25519 crypto
-- [x] Witness node with signing
-- [x] Gateway with aggregation
-- [x] CLI tool
-- [x] SQLite storage
-- [x] Example network setup
-
-### Phase 2: Federation (Mode 2) ✅
-
-- [x] Merkle tree for attestation batches
-- [x] Cross-network anchoring protocol
-- [x] Batch manager with periodic closing
-- [x] Federation client and endpoints
-- [x] Database schema for batches and cross-anchors
-- [x] 3-network federation example
-
-### Phase 3: Hardening (Mode 3)
-
-- [ ] Certificate Transparency anchoring
-- [ ] Internet Archive anchoring
-- [ ] DNS TXT record anchoring
-- [ ] Physical escrow integration
-
-### Phase 4: BLS Signatures ✅
-
-- [x] BLS12-381 signature implementation
-- [x] Signature aggregation (N signatures → 1)
-- [x] Gateway BLS aggregation logic
-- [x] Storage for both Ed25519 and BLS
-- [x] BLS example network
-- [x] Documentation and benchmarks
-
-### Phase 5: Production Readiness
-
-- [ ] Prometheus metrics
-- [ ] Health check improvements
-- [ ] Rate limiting
-- [ ] Admin API
-- [ ] Witness reputation system
-- [ ] Docker deployment
-
-### Phase 6: Advanced Features
-
-- [ ] Freebird integration (anonymous submission)
-- [ ] HyperToken integration (CRDT state sync)
-- [ ] Batch timestamping
-- [ ] Subscription/notification system
-- [ ] Light client verification
-
 ## FAQ
 
 **Q: Why not use a blockchain?**
-A: Blockchains have long confirmation times, fees, and require ongoing infrastructure. Witness provides instant timestamps with no ongoing costs.
+A: Bye, bye blockchain.
 
 **Q: How is this different from RFC 3161 timestamping?**
 A: RFC 3161 requires trusting a single timestamping authority. Witness uses threshold signatures across multiple independent witnesses.
@@ -495,38 +442,12 @@ A: No, you only submit SHA-256 hashes, not the content itself.
 **Q: What happens if a witness goes down?**
 A: As long as the threshold number of witnesses are available, the network continues operating.
 
-**Q: Can I run my own witness network?**
+**Q: Can I self-host my own witness network?**
 A: Yes! Use the example configs as a template and deploy witnesses to your infrastructure.
 
 **Q: What's the difference between Witness and Certificate Transparency?**
 A: CT logs are for TLS certificates and operated by large organizations. Witness is general-purpose and designed for easier self-hosting.
 
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-Areas we'd love help with:
-- Documentation improvements
-- Test coverage
-- Performance optimization
-- Federation protocol design (Mode 2)
-- External anchor integrations (Mode 3)
-
 ## License
 
 MIT License - see LICENSE file for details.
-
-## Credits
-
-Witness is part of a privacy-preserving infrastructure stack:
-- **Freebird:** Anonymous authorization via rate-limited tokens
-- **HyperToken:** Conflict-free replicated data type (CRDT) state sync
-- **Witness:** Federated timestamping (this project)
-
-Built by the privacy infrastructure community.
-
-## Support
-
-- Issues: https://github.com/your-org/witness/issues
-- Discussions: https://github.com/your-org/witness/discussions
-- Email: witness@example.com
