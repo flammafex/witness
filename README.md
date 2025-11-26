@@ -113,7 +113,7 @@ Stop the network:
 ./examples/stop.sh
 ```
 
-### Phase 2: Federation (Advanced)
+### Federation
 
 For production deployments, use **federated networks** for enhanced security:
 
@@ -139,7 +139,7 @@ For production deployments, use **federated networks** for enhanced security:
 
 See `examples/federation/README.md` for details.
 
-### Phase 4: BLS Signature Aggregation (Advanced)
+### BLS Signature Aggregation (Advanced)
 
 For high-throughput or bandwidth-constrained deployments, use **BLS signatures**:
 
