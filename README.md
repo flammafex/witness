@@ -8,6 +8,8 @@ _A mission of [The Carpocratian Church of Commonality and Equality](https://carp
 
 **Prove when something existed—without trusting any single party, and without needing a blockchain.**
 
+# CAN I GET A
+
 Witness is a federated witness network that provides threshold-signed timestamps. It's designed to be a privacy-preserving, decentralized timestamping service that doesn't rely on blockchains or single points of trust.
 
 ## Key Features
