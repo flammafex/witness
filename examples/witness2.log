@@ -1,0 +1,11 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized] target(s) in 0.12s
+     Running `target/release/witness-node --config /Users/sibyl/dev/witness/examples/witness2.json`
+[2m2025-11-26T17:40:41.929061Z[0m [32m INFO[0m [2mwitness_node[0m[2m:[0m Starting witness node: witness-2
+[2m2025-11-26T17:40:41.929118Z[0m [32m INFO[0m [2mwitness_node[0m[2m:[0m Public key: 1eb77d4d5b40fb8e85d8f31684bf6b99f45e38ec565d76e611b6606f4922ba9a
+[2m2025-11-26T17:40:41.929122Z[0m [32m INFO[0m [2mwitness_node[0m[2m:[0m Listening on port: 3002
+[2m2025-11-26T17:40:41.929247Z[0m [32m INFO[0m [2mwitness_node::server[0m[2m:[0m Witness node listening on 0.0.0.0:3002
+[2m2025-11-26T17:41:01.207695Z[0m [32m INFO[0m [2mwitness_node::server[0m[2m:[0m Signed attestation 2 for hash 0438ea06f2dc72b61101ec4735608f8f22a5cd7549df28dadb91fdd73639d858

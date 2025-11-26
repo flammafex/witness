@@ -1,0 +1,7 @@
+{
+  "id": "witness-1",
+  "private_key": "9e98f1e05751c9942e0270516a6290795e677fbaf7f12e98bf43c37d0e986d52",
+  "port": 3001,
+  "network_id": "example-network",
+  "max_clock_skew": 300
+}

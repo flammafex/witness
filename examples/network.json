@@ -1,0 +1,22 @@
+{
+  "id": "example-network",
+  "threshold": 2,
+  "witnesses": [
+    {
+      "id": "witness-1",
+      "pubkey": "d3737b556739b200cf1b1ce3abf392e52c969425cf9924f365831f033d83a75a",
+      "endpoint": "http://localhost:3001"
+    },
+    {
+      "id": "witness-2",
+      "pubkey": "1eb77d4d5b40fb8e85d8f31684bf6b99f45e38ec565d76e611b6606f4922ba9a",
+      "endpoint": "http://localhost:3002"
+    },
+    {
+      "id": "witness-3",
+      "pubkey": "5051c0dd443624b27a818a4dfd771211ebebb4c6c05919e9d6f7b142fa11f347",
+      "endpoint": "http://localhost:3003"
+    }
+  ],
+  "federation_peers": []
+}
