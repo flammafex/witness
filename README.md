@@ -1,3 +1,9 @@
+<div align=center><img src="church.png" width=72 height=72>
+
+_A mission of [The Carpocratian Church of Commonality and Equality](https://carpocratian.org/en/church/)_</div>
+
+<div align=center><img src="mission.png" width=256 height=200></div>
+
 # 🙌 Witness: Threshold Witness Timestamping System
 
 **Prove when something existed—without trusting any single party, and without needing a blockchain.**
