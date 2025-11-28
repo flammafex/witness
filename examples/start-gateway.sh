@@ -11,10 +11,7 @@ echo
 
 # Check if configs exist
 if [ ! -f "examples/gateway1/network.json" ]; then
-    echo "Configuration files not found."
-    echo "You need to create configuration directories:"
-    echo "  examples/gateway1/ with network.json and witness configs"
-    echo "  examples/gateway2/ with network.json and witness configs"
+    echo "Configuration files not found. Run './examples/setup-gateway.sh' first."
     exit 1
 fi
 
