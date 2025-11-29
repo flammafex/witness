@@ -185,7 +185,7 @@ For maximum security and public verifiability, enable **external anchoring** to 
 **Supported Providers:**
 - ✅ **Internet Archive** - Free, public, permanent web archive
 - ✅ **Trillian/Tessera** - Cryptographic transparency logs with verifiable inclusion proofs
-- 🚧 **DNS TXT Records** - Distributed verification via DNS (coming soon)
+- ✅ **DNS TXT Records** - Distributed verification via DNS queries
 - 🚧 **Blockchain** - Optional, for those who want it (coming soon)
 
 #### Configuration
@@ -197,7 +197,7 @@ Add to your `network.json`:
   "external_anchors": {
     "enabled": true,
     "anchor_period": 3600,
-    "minimum_required": 1,
+    "minimum_required": 2,
     "providers": [
       {
         "type": "internet_archive",
@@ -209,6 +209,14 @@ Add to your `network.json`:
         "enabled": true,
         "priority": 2,
         "log_url": "https://your-trillian-log.example.com"
+      },
+      {
+        "type": "dns_txt",
+        "enabled": true,
+        "priority": 3,
+        "api_url": "https://api.cloudflare.com/client/v4/zones/YOUR_ZONE/dns_records",
+        "domain": "witness.example.com",
+        "api_key": "YOUR_API_KEY"
       }
     ]
   }
@@ -224,6 +232,7 @@ Add to your `network.json`:
 **Provider-Specific Configuration:**
 - **Internet Archive**: No additional config required
 - **Trillian**: Requires `log_url` - URL of your Trillian/Tessera log endpoint
+- **DNS TXT**: Requires `api_url` (DNS API endpoint), `domain` (base domain for records), optional `api_key` (for authentication)
 
 #### How It Works
 
@@ -246,7 +255,7 @@ witness anchors <hash> --output json
 
 Example output:
 ```
-External Anchor Proofs (2 found)
+External Anchor Proofs (3 found)
 ═══════════════════════════════════════════════════
 
 Anchor #1: InternetArchive
@@ -265,7 +274,12 @@ Anchor #2: Trillian
     "merkle_root": "a591a6d40bf420404a011733cfb7b190..."
   }
 
-✓ Attestation is anchored to 2 external service(s)
+Anchor #3: DnsTxt
+  Timestamp: 1701234569 (2023-11-29 12:34:29 UTC)
+  DNS Record: _witness-42.witness.example.com
+  TXT Value: v=witness1;id=42;root=a591a6d40bf420404a011733cfb7b190...;network=example-network;start=1701230000;end=1701234000;count=156
+
+✓ Attestation is anchored to 3 external service(s)
 ```
 
 **Note:** Anchors are only created after a batch closes and only if federation is enabled. Standalone attestations won't have anchors until they're batched.

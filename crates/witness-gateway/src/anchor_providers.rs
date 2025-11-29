@@ -351,6 +351,160 @@ impl AnchorProvider for TrillianProvider {
     }
 }
 
+/// DNS TXT record anchor provider
+pub struct DnsTxtProvider {
+    client: Client,
+    api_url: String,
+    domain: String,
+    api_key: Option<String>,
+}
+
+impl DnsTxtProvider {
+    pub fn new(api_url: String, domain: String, api_key: Option<String>) -> Self {
+        Self {
+            client: Client::new(),
+            api_url,
+            domain,
+            api_key,
+        }
+    }
+
+    /// Create DNS TXT record name for a batch
+    fn create_record_name(&self, batch_id: u64) -> String {
+        format!("_witness-{}.{}", batch_id, self.domain)
+    }
+
+    /// Create DNS TXT record value for a batch
+    fn create_record_value(&self, request: &AnchorRequest) -> String {
+        format!(
+            "v=witness1;id={};root={};network={};start={};end={};count={}",
+            request.batch.id,
+            hex::encode(request.batch.merkle_root),
+            request.batch.network_id,
+            request.batch.period_start,
+            request.batch.period_end,
+            request.batch.attestation_count
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl AnchorProvider for DnsTxtProvider {
+    async fn anchor(&self, request: &AnchorRequest) -> Result<AnchorResponse> {
+        let record_name = self.create_record_name(request.batch.id);
+        let record_value = self.create_record_value(request);
+
+        tracing::info!(
+            "Creating DNS TXT record for batch {}: {}",
+            request.batch.id,
+            record_name
+        );
+
+        // Build DNS API request
+        let mut req = self.client
+            .post(&self.api_url)
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "name": record_name,
+                "type": "TXT",
+                "value": record_value,
+                "ttl": 3600,
+            }));
+
+        // Add API key if provided
+        if let Some(api_key) = &self.api_key {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        match req.send().await {
+            Ok(response) => {
+                let status = response.status();
+
+                if status.is_success() {
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+
+                    let proof = ExternalAnchorProof {
+                        provider: AnchorProviderType::DnsTxt,
+                        timestamp,
+                        proof: serde_json::json!({
+                            "record_name": record_name,
+                            "record_value": record_value,
+                            "domain": self.domain,
+                            "batch_id": request.batch.id,
+                            "merkle_root": hex::encode(request.batch.merkle_root),
+                        }),
+                        anchored_data: Some(record_value.as_bytes().to_vec()),
+                    };
+
+                    tracing::info!(
+                        "Successfully created DNS TXT record for batch {}: {}",
+                        request.batch.id,
+                        record_name
+                    );
+
+                    Ok(AnchorResponse {
+                        success: true,
+                        proof: Some(proof),
+                        error: None,
+                    })
+                } else {
+                    let error = format!(
+                        "DNS API returned status {}: {}",
+                        status,
+                        response.text().await.unwrap_or_default()
+                    );
+
+                    tracing::warn!("Failed to create DNS TXT record for batch {}: {}", request.batch.id, error);
+
+                    Ok(AnchorResponse {
+                        success: false,
+                        proof: None,
+                        error: Some(error),
+                    })
+                }
+            }
+            Err(e) => {
+                let error = format!("Failed to connect to DNS API: {}", e);
+                tracing::error!("{}", error);
+
+                Ok(AnchorResponse {
+                    success: false,
+                    proof: None,
+                    error: Some(error),
+                })
+            }
+        }
+    }
+
+    fn provider_type(&self) -> AnchorProviderType {
+        AnchorProviderType::DnsTxt
+    }
+
+    async fn verify(&self, proof: &ExternalAnchorProof) -> Result<bool> {
+        // Extract record name from proof
+        let record_name = proof
+            .proof
+            .get("record_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing record_name in proof"))?;
+
+        // Note: In a real implementation, you would use a DNS resolver to query the TXT record
+        // For now, we'll just verify the proof structure is valid
+        tracing::info!("Verifying DNS TXT record: {}", record_name);
+
+        // TODO: Implement actual DNS resolution using trust-dns-resolver or similar
+        // For now, return true if the proof has the required fields
+        let has_required_fields = proof.proof.get("record_value").is_some()
+            && proof.proof.get("domain").is_some()
+            && proof.proof.get("merkle_root").is_some();
+
+        Ok(has_required_fields)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,7 @@ use witness_core::{
     AttestationBatch, ExternalAnchorProof, NetworkConfig,
 };
 
-use crate::anchor_providers::{AnchorProvider, InternetArchiveProvider, TrillianProvider};
+use crate::anchor_providers::{AnchorProvider, DnsTxtProvider, InternetArchiveProvider, TrillianProvider};
 use crate::storage::Storage;
 
 /// Manages external anchoring of batches to public services
@@ -40,8 +40,20 @@ impl AnchorManager {
                         }
                     }
                     AnchorProviderType::DnsTxt => {
-                        tracing::warn!("DNS TXT provider not yet implemented");
-                        // TODO: providers.push(Arc::new(DnsTxtProvider::new()));
+                        let api_url = provider_config.config.get("api_url").and_then(|v| v.as_str());
+                        let domain = provider_config.config.get("domain").and_then(|v| v.as_str());
+                        let api_key = provider_config.config.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                        if let (Some(api_url), Some(domain)) = (api_url, domain) {
+                            tracing::info!("Initializing DNS TXT anchor provider: {} (domain: {})", api_url, domain);
+                            providers.push(Arc::new(DnsTxtProvider::new(
+                                api_url.to_string(),
+                                domain.to_string(),
+                                api_key,
+                            )));
+                        } else {
+                            tracing::error!("DNS TXT provider enabled but missing 'api_url' or 'domain' in config");
+                        }
                     }
                     AnchorProviderType::Blockchain => {
                         tracing::warn!("Blockchain provider not yet implemented");
