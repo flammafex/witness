@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use anyhow::Result;
 use witness_core::{
-    AnchorProviderConfig, AnchorProviderType, AnchorRequest, AnchorResponse,
+    AnchorProviderType, AnchorRequest,
     AttestationBatch, ExternalAnchorProof, NetworkConfig,
 };
 
-use crate::anchor_providers::{AnchorProvider, InternetArchiveProvider};
+use crate::anchor_providers::{AnchorProvider, DnsTxtProvider, InternetArchiveProvider, TrillianProvider};
 use crate::storage::Storage;
 
 /// Manages external anchoring of batches to public services
@@ -32,12 +32,28 @@ impl AnchorManager {
                         providers.push(Arc::new(InternetArchiveProvider::new()));
                     }
                     AnchorProviderType::Trillian => {
-                        tracing::warn!("Trillian provider not yet implemented");
-                        // TODO: providers.push(Arc::new(TrillianProvider::new()));
+                        if let Some(log_url) = provider_config.config.get("log_url").and_then(|v| v.as_str()) {
+                            tracing::info!("Initializing Trillian anchor provider: {}", log_url);
+                            providers.push(Arc::new(TrillianProvider::new(log_url.to_string())));
+                        } else {
+                            tracing::error!("Trillian provider enabled but missing 'log_url' in config");
+                        }
                     }
                     AnchorProviderType::DnsTxt => {
-                        tracing::warn!("DNS TXT provider not yet implemented");
-                        // TODO: providers.push(Arc::new(DnsTxtProvider::new()));
+                        let api_url = provider_config.config.get("api_url").and_then(|v| v.as_str());
+                        let domain = provider_config.config.get("domain").and_then(|v| v.as_str());
+                        let api_key = provider_config.config.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                        if let (Some(api_url), Some(domain)) = (api_url, domain) {
+                            tracing::info!("Initializing DNS TXT anchor provider: {} (domain: {})", api_url, domain);
+                            providers.push(Arc::new(DnsTxtProvider::new(
+                                api_url.to_string(),
+                                domain.to_string(),
+                                api_key,
+                            )));
+                        } else {
+                            tracing::error!("DNS TXT provider enabled but missing 'api_url' or 'domain' in config");
+                        }
                     }
                     AnchorProviderType::Blockchain => {
                         tracing::warn!("Blockchain provider not yet implemented");
