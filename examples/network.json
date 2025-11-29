@@ -18,5 +18,9 @@
       "endpoint": "http://localhost:3003"
     }
   ],
-  "federation_peers": []
+  "federation": {
+    "enabled": false,
+    "batch_period": 3600,
+    "peer_networks": []
+  }
 }

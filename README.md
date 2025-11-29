@@ -134,7 +134,7 @@ For production deployments, use **federated networks** for enhanced security:
 
 **Federation provides:**
 - **3 independent networks** that witness each other
-- **Periodic batch closing** (every 60 seconds by default)
+- **Periodic batch closing** (60 seconds in the example, configurable via `batch_period`)
 - **Cross-network attestations** of merkle roots
 - **Enhanced security:** Requires compromising multiple independent networks
 
@@ -267,6 +267,38 @@ Response:
 #### `GET /v1/config`
 Get network configuration (witnesses, threshold, etc).
 
+#### `GET /health`
+Health check endpoint. Returns `{"status": "ok"}` if the gateway is running.
+
+#### `POST /v1/federation/anchor`
+Federation endpoint for cross-network anchoring (Phase 2). Accepts a batch from a peer network and returns a cross-anchor attestation.
+
+Request:
+```json
+{
+  "batch": {
+    "id": 1,
+    "network_id": "network-a",
+    "merkle_root": [/* 32 bytes */],
+    "period_start": 1234567890,
+    "period_end": 1234567950,
+    "attestation_count": 42
+  }
+}
+```
+
+Response:
+```json
+{
+  "cross_anchor": {
+    "batch": { /* same as request */ },
+    "witnessing_network": "network-b",
+    "signatures": [/* witness signatures */],
+    "timestamp": 1234567890
+  }
+}
+```
+
 ## Configuration
 
 ### Witness Node Config
@@ -325,8 +357,15 @@ The gateway requires a network configuration file (`network.json`):
   ],
   "federation": {
     "enabled": true,
-    "batch_period": 60,
-    "peer_networks": [...]
+    "batch_period": 3600,
+    "cross_anchor_threshold": 2,
+    "peer_networks": [
+      {
+        "id": "peer-network-1",
+        "gateway": "http://peer1.example.com:8080",
+        "min_witnesses": 2
+      }
+    ]
   }
 }
 ```
@@ -346,8 +385,15 @@ The gateway requires a network configuration file (`network.json`):
   ],
   "federation": {
     "enabled": true,
-    "batch_period": 60,
-    "peer_networks": [...]
+    "batch_period": 3600,
+    "cross_anchor_threshold": 2,
+    "peer_networks": [
+      {
+        "id": "peer-network-1",
+        "gateway": "http://peer1.example.com:8080",
+        "min_witnesses": 2
+      }
+    ]
   }
 }
 ```
@@ -358,6 +404,13 @@ The gateway requires a network configuration file (`network.json`):
 - `threshold`: Minimum number of signatures required
 - `witnesses`: List of witness nodes in the network
 - `federation`: Federation configuration (optional)
+  - `enabled`: Whether federation is enabled
+  - `batch_period`: How often to close batches in seconds (default: 3600 = 1 hour)
+  - `cross_anchor_threshold`: Minimum number of peer networks required for cross-anchoring
+  - `peer_networks`: List of peer networks to federate with
+    - `id`: Peer network identifier
+    - `gateway`: Gateway URL for the peer network
+    - `min_witnesses`: Minimum signatures required from this peer
 
 ## Security Considerations
 
