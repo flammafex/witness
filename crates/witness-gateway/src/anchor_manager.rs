@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use anyhow::Result;
 use witness_core::{
-    AnchorProviderConfig, AnchorProviderType, AnchorRequest, AnchorResponse,
+    AnchorProviderType, AnchorRequest,
     AttestationBatch, ExternalAnchorProof, NetworkConfig,
 };
 
-use crate::anchor_providers::{AnchorProvider, InternetArchiveProvider};
+use crate::anchor_providers::{AnchorProvider, InternetArchiveProvider, TrillianProvider};
 use crate::storage::Storage;
 
 /// Manages external anchoring of batches to public services
@@ -32,8 +32,12 @@ impl AnchorManager {
                         providers.push(Arc::new(InternetArchiveProvider::new()));
                     }
                     AnchorProviderType::Trillian => {
-                        tracing::warn!("Trillian provider not yet implemented");
-                        // TODO: providers.push(Arc::new(TrillianProvider::new()));
+                        if let Some(log_url) = provider_config.config.get("log_url").and_then(|v| v.as_str()) {
+                            tracing::info!("Initializing Trillian anchor provider: {}", log_url);
+                            providers.push(Arc::new(TrillianProvider::new(log_url.to_string())));
+                        } else {
+                            tracing::error!("Trillian provider enabled but missing 'log_url' in config");
+                        }
                     }
                     AnchorProviderType::DnsTxt => {
                         tracing::warn!("DNS TXT provider not yet implemented");

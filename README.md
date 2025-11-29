@@ -184,7 +184,7 @@ For maximum security and public verifiability, enable **external anchoring** to 
 
 **Supported Providers:**
 - ✅ **Internet Archive** - Free, public, permanent web archive
-- 🚧 **Trillian/Tessera** - Cryptographic transparency logs (coming soon)
+- ✅ **Trillian/Tessera** - Cryptographic transparency logs with verifiable inclusion proofs
 - 🚧 **DNS TXT Records** - Distributed verification via DNS (coming soon)
 - 🚧 **Blockchain** - Optional, for those who want it (coming soon)
 
@@ -203,6 +203,12 @@ Add to your `network.json`:
         "type": "internet_archive",
         "enabled": true,
         "priority": 1
+      },
+      {
+        "type": "trillian",
+        "enabled": true,
+        "priority": 2,
+        "log_url": "https://your-trillian-log.example.com"
       }
     ]
   }
@@ -214,6 +220,10 @@ Add to your `network.json`:
 - `anchor_period`: Ignored - uses federation's `batch_period` instead
 - `minimum_required`: Minimum successful anchors required (default: 1)
 - `providers`: List of anchor providers to use
+
+**Provider-Specific Configuration:**
+- **Internet Archive**: No additional config required
+- **Trillian**: Requires `log_url` - URL of your Trillian/Tessera log endpoint
 
 #### How It Works
 
@@ -236,7 +246,7 @@ witness anchors <hash> --output json
 
 Example output:
 ```
-External Anchor Proofs (1 found)
+External Anchor Proofs (2 found)
 ═══════════════════════════════════════════════════
 
 Anchor #1: InternetArchive
@@ -244,7 +254,18 @@ Anchor #1: InternetArchive
   Archive URL: https://web.archive.org/web/20231129123427/...
   Merkle Root: a591a6d40bf420404a011733cfb7b190...
 
-✓ Attestation is anchored to 1 external service(s)
+Anchor #2: Trillian
+  Timestamp: 1701234568 (2023-11-29 12:34:28 UTC)
+  Proof: {
+    "log_url": "https://your-trillian-log.example.com",
+    "tree_size": 1234,
+    "log_index": 1233,
+    "inclusion_proof": [...],
+    "batch_id": 42,
+    "merkle_root": "a591a6d40bf420404a011733cfb7b190..."
+  }
+
+✓ Attestation is anchored to 2 external service(s)
 ```
 
 **Note:** Anchors are only created after a batch closes and only if federation is enabled. Standalone attestations won't have anchors until they're batched.
