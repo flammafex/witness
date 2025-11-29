@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Command-line tool for interacting with the Witness timestamping network"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["timestamp", "cli", "witness", "verification", "cryptography"]
+categories = ["command-line-utilities", "cryptography"]
 
 [[bin]]
 name = "witness"
