@@ -31,4 +31,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 hex.workspace = true
+base64.workspace = true
 async-trait = "0.1"
