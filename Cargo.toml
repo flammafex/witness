@@ -19,7 +19,7 @@ description = "A federated threshold witness timestamping system"
 
 [workspace.dependencies]
 # Core dependencies
-witness-core = { path = "crates/witness-core" }
+witness-core = { path = "crates/witness-core", version = "0.1.0" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
