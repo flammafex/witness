@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
 use witness_core::{
-    NetworkConfig, SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest,
-    VerifyResponse,
+    ExternalAnchorProof, NetworkConfig, SignedAttestation, TimestampRequest, TimestampResponse,
+    VerifyRequest, VerifyResponse,
 };
 
 pub struct WitnessClient {
@@ -128,5 +128,34 @@ impl WitnessClient {
             .context("Failed to parse gateway response")?;
 
         Ok(config)
+    }
+
+    pub async fn get_batch_anchors(&self, hash: &str) -> Result<Vec<ExternalAnchorProof>> {
+        let url = format!("{}/v1/anchors/{}", self.gateway_url, hash);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to gateway")?;
+
+        if !response.status().is_success() {
+            if response.status() == 404 {
+                // Not found - return empty list
+                return Ok(Vec::new());
+            }
+
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Gateway returned error {}: {}", status, error_text);
+        }
+
+        let anchors: Vec<ExternalAnchorProof> = response
+            .json()
+            .await
+            .context("Failed to parse gateway response")?;
+
+        Ok(anchors)
     }
 }

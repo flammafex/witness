@@ -24,15 +24,13 @@ Witness is a federated witness network that provides threshold-signed timestamps
 
 ## Design Philosophy
 
-Witness has two operating modes:
+Witness has three operating modes:
 
-1. **Minimal (single network):** One set of witnesses with threshold signatures. Good for development and low-stakes use.
+1. **Phase 1 - Minimal (single network):** One set of witnesses with threshold signatures. Good for development and low-stakes use.
 
-2. **Federated (cross-network anchoring):** Multiple independent Witness networks periodically witness each other's merkle roots. This is the default "secure" mode.
+2. **Phase 2 - Federated (cross-network anchoring):** Multiple independent Witness networks periodically witness each other's merkle roots. Enhanced security through federation.
 
-Mode 3 is planned for a future release.
-
-3. **Hardened (external anchors):** Additional anchoring to Certificate Transparency logs, Internet Archive, DNS TXT records, physical escrow.
+3. **Phase 3 - Hardened (external anchors):** ✅ **Now Available!** Batch merkle roots automatically anchored to public services (Internet Archive, Trillian transparency logs, DNS TXT, blockchain). Provides irrefutable public proof.
 
 ## Architecture
 
@@ -134,7 +132,7 @@ For production deployments, use **federated networks** for enhanced security:
 
 **Federation provides:**
 - **3 independent networks** that witness each other
-- **Periodic batch closing** (every 60 seconds by default)
+- **Periodic batch closing** (60 seconds in the example, configurable via `batch_period`)
 - **Cross-network attestations** of merkle roots
 - **Enhanced security:** Requires compromising multiple independent networks
 
@@ -174,6 +172,83 @@ For high-throughput or bandwidth-constrained deployments, use **BLS signatures**
 
 See `examples/bls/README.md` for detailed documentation.
 
+### External Anchoring (Phase 3 - Advanced)
+
+For maximum security and public verifiability, enable **external anchoring** to submit batch merkle roots to public services:
+
+**Why External Anchors?**
+- **Public Proof:** Irrefutable evidence in widely-trusted public systems
+- **Long-term Verifiability:** Archive.org and transparency logs outlive individual organizations
+- **No Single Point of Trust:** Even if all witnesses are compromised, the public record remains
+- **Regulatory Compliance:** Some industries require this level of proof
+
+**Supported Providers:**
+- ✅ **Internet Archive** - Free, public, permanent web archive
+- 🚧 **Trillian/Tessera** - Cryptographic transparency logs (coming soon)
+- 🚧 **DNS TXT Records** - Distributed verification via DNS (coming soon)
+- 🚧 **Blockchain** - Optional, for those who want it (coming soon)
+
+#### Configuration
+
+Add to your `network.json`:
+
+```json
+{
+  "external_anchors": {
+    "enabled": true,
+    "anchor_period": 3600,
+    "minimum_required": 1,
+    "providers": [
+      {
+        "type": "internet_archive",
+        "enabled": true,
+        "priority": 1
+      }
+    ]
+  }
+}
+```
+
+**Fields:**
+- `enabled`: Enable external anchoring (requires federation to be enabled)
+- `anchor_period`: Ignored - uses federation's `batch_period` instead
+- `minimum_required`: Minimum successful anchors required (default: 1)
+- `providers`: List of anchor providers to use
+
+#### How It Works
+
+1. Federation closes a batch (creates merkle root)
+2. Gateway automatically submits batch to enabled anchor providers (parallel)
+3. Providers return anchor proofs (URLs, transaction hashes, etc.)
+4. Proofs stored in database for verification
+
+#### Viewing Anchor Proofs
+
+Use the CLI to view external anchor proofs for any timestamped hash:
+
+```bash
+# View anchors for a hash
+witness anchors <hash>
+
+# JSON output
+witness anchors <hash> --output json
+```
+
+Example output:
+```
+External Anchor Proofs (1 found)
+═══════════════════════════════════════════════════
+
+Anchor #1: InternetArchive
+  Timestamp: 1701234567 (2023-11-29 12:34:27 UTC)
+  Archive URL: https://web.archive.org/web/20231129123427/...
+  Merkle Root: a591a6d40bf420404a011733cfb7b190...
+
+✓ Attestation is anchored to 1 external service(s)
+```
+
+**Note:** Anchors are only created after a batch closes and only if federation is enabled. Standalone attestations won't have anchors until they're batched.
+
 ## Usage Guide
 
 ### Witness CLI
@@ -201,6 +276,13 @@ witness get <hash>
 ```bash
 witness verify <attestation-file>
 ```
+
+#### View external anchor proofs
+```bash
+witness anchors <hash>
+```
+
+Shows external anchor proofs (Internet Archive, Trillian, etc.) for a timestamped hash. Only available if federation and external anchoring are enabled.
 
 #### View network config
 ```bash
@@ -267,6 +349,59 @@ Response:
 #### `GET /v1/config`
 Get network configuration (witnesses, threshold, etc).
 
+#### `GET /health`
+Health check endpoint. Returns `{"status": "ok"}` if the gateway is running.
+
+#### `GET /v1/anchors/:hash`
+Get external anchor proofs for a timestamped hash (Phase 3).
+
+Returns an array of anchor proofs, or empty array if not batched/anchored yet.
+
+Response:
+```json
+[
+  {
+    "provider": "internet_archive",
+    "timestamp": 1701234567,
+    "proof": {
+      "archive_url": "https://web.archive.org/web/...",
+      "batch_id": 1,
+      "merkle_root": "a591a6d40bf420404a011733cfb7b190..."
+    },
+    "anchored_data": null
+  }
+]
+```
+
+#### `POST /v1/federation/anchor`
+Federation endpoint for cross-network anchoring (Phase 2). Accepts a batch from a peer network and returns a cross-anchor attestation.
+
+Request:
+```json
+{
+  "batch": {
+    "id": 1,
+    "network_id": "network-a",
+    "merkle_root": [/* 32 bytes */],
+    "period_start": 1234567890,
+    "period_end": 1234567950,
+    "attestation_count": 42
+  }
+}
+```
+
+Response:
+```json
+{
+  "cross_anchor": {
+    "batch": { /* same as request */ },
+    "witnessing_network": "network-b",
+    "signatures": [/* witness signatures */],
+    "timestamp": 1234567890
+  }
+}
+```
+
 ## Configuration
 
 ### Witness Node Config
@@ -325,8 +460,15 @@ The gateway requires a network configuration file (`network.json`):
   ],
   "federation": {
     "enabled": true,
-    "batch_period": 60,
-    "peer_networks": [...]
+    "batch_period": 3600,
+    "cross_anchor_threshold": 2,
+    "peer_networks": [
+      {
+        "id": "peer-network-1",
+        "gateway": "http://peer1.example.com:8080",
+        "min_witnesses": 2
+      }
+    ]
   }
 }
 ```
@@ -346,8 +488,15 @@ The gateway requires a network configuration file (`network.json`):
   ],
   "federation": {
     "enabled": true,
-    "batch_period": 60,
-    "peer_networks": [...]
+    "batch_period": 3600,
+    "cross_anchor_threshold": 2,
+    "peer_networks": [
+      {
+        "id": "peer-network-1",
+        "gateway": "http://peer1.example.com:8080",
+        "min_witnesses": 2
+      }
+    ]
   }
 }
 ```
@@ -358,6 +507,13 @@ The gateway requires a network configuration file (`network.json`):
 - `threshold`: Minimum number of signatures required
 - `witnesses`: List of witness nodes in the network
 - `federation`: Federation configuration (optional)
+  - `enabled`: Whether federation is enabled
+  - `batch_period`: How often to close batches in seconds (default: 3600 = 1 hour)
+  - `cross_anchor_threshold`: Minimum number of peer networks required for cross-anchoring
+  - `peer_networks`: List of peer networks to federate with
+    - `id`: Peer network identifier
+    - `gateway`: Gateway URL for the peer network
+    - `min_witnesses`: Minimum signatures required from this peer
 
 ## Security Considerations
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{sqlite::SqlitePool, Row};
 use witness_core::{
     signature_scheme::AttestationSignatures, Attestation, AttestationBatch, CrossAnchor,
-    SignedAttestation, WitnessSignature,
+    ExternalAnchorProof, SignedAttestation, WitnessSignature,
 };
 
 pub struct Storage {
@@ -125,6 +125,33 @@ impl Storage {
         .execute(&self.pool)
         .await
         .ok(); // Ignore error if column already exists
+
+        // Phase 3: External anchor proofs
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS external_anchor_proofs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                batch_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                proof_json TEXT NOT NULL,
+                anchored_data BLOB,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (batch_id) REFERENCES batches(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_external_anchors_batch
+            ON external_anchor_proofs(batch_id)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -584,5 +611,81 @@ impl Storage {
         }
 
         Ok(cross_anchors)
+    }
+
+    // ========== Phase 3: External Anchor Proofs ==========
+
+    /// Store an external anchor proof for a batch
+    pub async fn store_anchor_proof(
+        &self,
+        batch_id: u64,
+        proof: &ExternalAnchorProof,
+    ) -> Result<()> {
+        let provider_str = format!("{}", proof.provider);
+        let proof_json = serde_json::to_string(&proof.proof)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO external_anchor_proofs (batch_id, provider, timestamp, proof_json, anchored_data, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+        )
+        .bind(batch_id as i64)
+        .bind(&provider_str)
+        .bind(proof.timestamp as i64)
+        .bind(&proof_json)
+        .bind(proof.anchored_data.as_deref())
+        .bind(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get all external anchor proofs for a batch
+    pub async fn get_anchor_proofs(&self, batch_id: u64) -> Result<Vec<ExternalAnchorProof>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT provider, timestamp, proof_json, anchored_data
+            FROM external_anchor_proofs
+            WHERE batch_id = ?1
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(batch_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut proofs = Vec::new();
+
+        for row in rows {
+            let provider_str: String = row.get("provider");
+            let provider = match provider_str.as_str() {
+                "internet_archive" => witness_core::AnchorProviderType::InternetArchive,
+                "trillian" => witness_core::AnchorProviderType::Trillian,
+                "dns_txt" => witness_core::AnchorProviderType::DnsTxt,
+                "blockchain" => witness_core::AnchorProviderType::Blockchain,
+                _ => continue, // Skip unknown providers
+            };
+
+            let proof_json: String = row.get("proof_json");
+            let proof_value: serde_json::Value = serde_json::from_str(&proof_json)?;
+
+            let anchored_data: Option<Vec<u8>> = row.get("anchored_data");
+
+            proofs.push(ExternalAnchorProof {
+                provider,
+                timestamp: row.get::<i64, _>("timestamp") as u64,
+                proof: proof_value,
+                anchored_data,
+            });
+        }
+
+        Ok(proofs)
     }
 }

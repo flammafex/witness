@@ -4,7 +4,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{timestamp, verify, get};
+use commands::{anchors, get, timestamp, verify};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -62,6 +62,16 @@ enum Commands {
 
     /// Show gateway configuration
     Config {},
+
+    /// Show external anchor proofs for an attestation
+    Anchors {
+        /// Hash to look up (hex encoded SHA-256)
+        hash: String,
+
+        /// Output format: json or text
+        #[arg(short, long, default_value = "text")]
+        output: String,
+    },
 }
 
 #[tokio::main]
@@ -82,6 +92,9 @@ async fn main() -> Result<()> {
             let client = client::WitnessClient::new(&cli.gateway);
             let config = client.get_config().await?;
             println!("{}", serde_json::to_string_pretty(&config)?);
+        }
+        Commands::Anchors { hash, output } => {
+            anchors::run(&cli.gateway, &hash, &output).await?;
         }
     }
 
