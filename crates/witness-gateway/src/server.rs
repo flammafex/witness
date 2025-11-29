@@ -8,8 +8,9 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use witness_core::{
-    Attestation, CrossAnchorRequest, CrossAnchorResponse, NetworkConfig, SignatureScheme,
-    SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
+    Attestation, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof, NetworkConfig,
+    SignatureScheme, SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest,
+    VerifyResponse,
 };
 
 use crate::batch_manager::BatchManager;
@@ -51,6 +52,8 @@ impl GatewayServer {
             .route("/v1/verify", post(verify_handler))
             // Phase 2: Federation endpoints
             .route("/v1/federation/anchor", post(federation_anchor_handler))
+            // Phase 3: External anchor endpoints
+            .route("/v1/anchors/:hash", get(get_anchors_handler))
             .layer(CorsLayer::permissive())
             .with_state(self);
 
@@ -374,6 +377,50 @@ async fn federation_anchor_handler(
     );
 
     Ok(Json(CrossAnchorResponse { cross_anchor }))
+}
+
+// Phase 3: Get external anchor proofs for an attestation
+async fn get_anchors_handler(
+    State(server): State<GatewayServer>,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::debug!("Looking up external anchors for hash: {}", hash);
+
+    let hash_bytes = hex::decode(&hash)
+        .map_err(|_| AppError::InvalidHash)?;
+
+    let hash_array: [u8; 32] = hash_bytes
+        .try_into()
+        .map_err(|_| AppError::InvalidHash)?;
+
+    // First, check if the attestation exists
+    let attestation = server
+        .storage
+        .get_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Check if it's in a batch
+    let batch_id = server
+        .storage
+        .get_batch_id_for_attestation(&hash_array)
+        .await?;
+
+    match batch_id {
+        Some(batch_id) => {
+            // Get anchor proofs for this batch
+            let proofs: Vec<ExternalAnchorProof> = server
+                .storage
+                .get_anchor_proofs(batch_id as u64)
+                .await?;
+
+            Ok(Json(proofs))
+        }
+        None => {
+            // Attestation exists but not batched yet
+            Ok(Json(Vec::<ExternalAnchorProof>::new()))
+        }
+    }
 }
 
 // Error handling
