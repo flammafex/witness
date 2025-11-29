@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Gateway server that aggregates witness signatures for timestamping"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["timestamp", "gateway", "witness", "federation", "aggregation"]
+categories = ["cryptography", "web-programming::http-server"]
 
 [[bin]]
 name = "witness-gateway"

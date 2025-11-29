@@ -12,6 +12,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Witness Contributors"]
+repository = "https://github.com/flammafex/witness"
+homepage = "https://github.com/flammafex/witness"
+readme = "README.md"
+description = "A federated threshold witness timestamping system"
 
 [workspace.dependencies]
 # Core dependencies
