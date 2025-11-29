@@ -148,6 +148,10 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub federation: crate::federation::FederationConfig,
 
+    /// External anchors configuration (Phase 3)
+    #[serde(default)]
+    pub external_anchors: crate::external_anchors::ExternalAnchorsConfig,
+
     /// Deprecated: Use federation.peer_networks instead
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub federation_peers: Vec<String>,

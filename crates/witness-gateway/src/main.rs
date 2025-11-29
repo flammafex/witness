@@ -3,6 +3,7 @@ mod storage;
 mod witness_client;
 mod batch_manager;
 mod federation_client;
+mod anchor_providers;
 
 use anyhow::Result;
 use clap::Parser;
