@@ -3,6 +3,7 @@ use std::time::Duration;
 use tokio::time;
 use witness_core::{AttestationBatch, MerkleTree, NetworkConfig};
 
+use crate::anchor_manager::AnchorManager;
 use crate::storage::Storage;
 
 /// Manages periodic batch closing for federation
@@ -10,6 +11,7 @@ pub struct BatchManager {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
     last_batch_time: Arc<tokio::sync::Mutex<u64>>,
+    anchor_manager: Option<Arc<AnchorManager>>,
 }
 
 impl BatchManager {
@@ -23,7 +25,14 @@ impl BatchManager {
             config,
             storage,
             last_batch_time: Arc::new(tokio::sync::Mutex::new(now)),
+            anchor_manager: None,
         }
+    }
+
+    /// Set the anchor manager (must be called before start)
+    pub fn with_anchor_manager(mut self, anchor_manager: Arc<AnchorManager>) -> Self {
+        self.anchor_manager = Some(anchor_manager);
+        self
     }
 
     /// Start the batch manager background task
@@ -111,10 +120,17 @@ impl BatchManager {
         // Update last batch time
         *last_batch_time = now;
 
-        Ok(Some(AttestationBatch {
+        let final_batch = AttestationBatch {
             id: batch_id as u64,
             ..batch
-        }))
+        };
+
+        // Trigger external anchoring if enabled
+        if let Some(anchor_manager) = &self.anchor_manager {
+            anchor_manager.clone().anchor_batch_async(final_batch.clone());
+        }
+
+        Ok(Some(final_batch))
     }
 
     /// Manually trigger a batch close (for testing)

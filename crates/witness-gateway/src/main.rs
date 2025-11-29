@@ -1,9 +1,10 @@
+mod anchor_manager;
+mod anchor_providers;
+mod batch_manager;
+mod federation_client;
 mod server;
 mod storage;
 mod witness_client;
-mod batch_manager;
-mod federation_client;
-mod anchor_providers;
 
 use anyhow::Result;
 use clap::Parser;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use tracing_subscriber;
 use witness_core::NetworkConfig;
 
+use anchor_manager::AnchorManager;
 use batch_manager::BatchManager;
 use federation_client::FederationClient;
 use server::GatewayServer;
@@ -67,6 +69,16 @@ async fn main() -> Result<()> {
         tracing::info!("Federation disabled (Phase 1 mode)");
     }
 
+    // Check if external anchoring is enabled (Phase 3)
+    if network_config.external_anchors.enabled {
+        tracing::info!("External anchoring enabled with {} providers",
+            network_config.external_anchors.providers.len());
+        tracing::info!("Anchor period: {} seconds",
+            network_config.external_anchors.anchor_period);
+        tracing::info!("Minimum required anchors: {}",
+            network_config.external_anchors.minimum_required);
+    }
+
     // Initialize storage
     let db_url = format!("sqlite:{}", args.database.display());
     let storage = Storage::new(&db_url).await?;
@@ -78,11 +90,17 @@ async fn main() -> Result<()> {
     let network_config = Arc::new(network_config);
     let storage = Arc::new(storage);
 
-    // Initialize batch manager (Phase 2)
-    let batch_manager = Arc::new(BatchManager::new(
+    // Initialize anchor manager (Phase 3)
+    let anchor_manager = Arc::new(AnchorManager::new(
         network_config.clone(),
         storage.clone(),
     ));
+
+    // Initialize batch manager (Phase 2) with anchor manager
+    let batch_manager = Arc::new(
+        BatchManager::new(network_config.clone(), storage.clone())
+            .with_anchor_manager(anchor_manager.clone())
+    );
 
     // Initialize federation client (Phase 2)
     let federation_client = Arc::new(FederationClient::new(
