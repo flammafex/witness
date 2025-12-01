@@ -1,7 +1,0 @@
-{
-  "id": "gateway2-witness-2",
-  "private_key": "d9fce5106b07c06c67b64c44ce9d685b1af3ca2c5032f7ea61d371e83f8ee54e",
-  "port": 4005,
-  "network_id": "gateway2-network",
-  "max_clock_skew": 300
-}

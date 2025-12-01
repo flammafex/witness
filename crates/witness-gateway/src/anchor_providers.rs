@@ -3,6 +3,9 @@ use reqwest::Client;
 use witness_core::{
     AnchorProviderType, AnchorRequest, AnchorResponse, ExternalAnchorProof,
 };
+use ethers::prelude::*;
+use std::str::FromStr;
+use std::convert::TryFrom;
 
 /// Trait for external anchor providers
 #[async_trait::async_trait]
@@ -185,6 +188,137 @@ impl AnchorProvider for InternetArchiveProvider {
                 tracing::error!("Failed to verify archive: {}", e);
                 Ok(false)
             }
+        }
+    }
+}
+
+/// Ethereum/EVM anchor provider
+/// Anchors batch roots by sending a 0-value transaction with the root in input data.
+pub struct EthereumProvider {
+    client: SignerMiddleware<Provider<Http>, LocalWallet>,
+}
+
+impl EthereumProvider {
+    pub async fn new(rpc_url: &str, private_key: &str) -> Result<Self> {
+        let provider = Provider::<Http>::try_from(rpc_url)?;
+        let chain_id = provider.get_chainid().await?;
+        
+        let wallet = LocalWallet::from_str(private_key)?
+            .with_chain_id(chain_id.as_u64());
+
+        let client = SignerMiddleware::new(provider, wallet);
+
+        Ok(Self { client })
+    }
+}
+
+#[async_trait::async_trait]
+impl AnchorProvider for EthereumProvider {
+    async fn anchor(&self, request: &AnchorRequest) -> Result<AnchorResponse> {
+        // 1. Prepare the payload (The Merkle Root)
+        // We use the raw bytes of the root as the transaction data
+        let data = Bytes::from(request.batch.merkle_root.to_vec());
+
+        // 2. Construct the transaction
+        // We send 0 ETH to ourselves (the sender), just to carry the data payload.
+        let tx = TransactionRequest::new()
+            .to(self.client.address()) 
+            .value(0)
+            .data(data.clone());
+
+        tracing::info!(
+            "Submitting batch {} anchor to Ethereum (Chain ID: {})",
+            request.batch.id,
+            self.client.signer().chain_id()
+        );
+
+        // 3. Send and wait for receipt
+        // In production, you might want to wait for fewer confirmations to return faster,
+        // but for an anchor, 1 confirmation is usually enough to get the hash.
+        match self.client.send_transaction(tx, None).await {
+            Ok(pending_tx) => {
+                let tx_hash = pending_tx.tx_hash();
+                tracing::info!("Ethereum Tx sent: {:?}", tx_hash);
+
+                // Wait for mining (optional, but good for verification certainty)
+                let receipt = pending_tx.await?;
+
+                if let Some(receipt) = receipt {
+                    if receipt.status == Some(U64::from(1)) {
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+
+                        let proof = ExternalAnchorProof {
+                            provider: AnchorProviderType::Blockchain,
+                            timestamp,
+                            proof: serde_json::json!({
+                                "network": "ethereum", // or polygon, optimism, etc.
+                                "chain_id": self.client.signer().chain_id(),
+                                "tx_hash": format!("{:?}", tx_hash),
+                                "block_number": receipt.block_number,
+                                "batch_id": request.batch.id,
+                                "merkle_root": hex::encode(request.batch.merkle_root),
+                            }),
+                            anchored_data: Some(data.to_vec()),
+                        };
+
+                        Ok(AnchorResponse {
+                            success: true,
+                            proof: Some(proof),
+                            error: None,
+                        })
+                    } else {
+                        // Reverted
+                        let error = "Ethereum transaction reverted".to_string();
+                        tracing::error!("{}", error);
+                        Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+                    }
+                } else {
+                    // Dropped?
+                    let error = "Ethereum transaction dropped".to_string();
+                    Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+                }
+            }
+            Err(e) => {
+                let error = format!("Failed to send Ethereum transaction: {}", e);
+                tracing::error!("{}", error);
+                Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+            }
+        }
+    }
+
+    fn provider_type(&self) -> AnchorProviderType {
+        AnchorProviderType::Blockchain
+    }
+
+    async fn verify(&self, proof: &ExternalAnchorProof) -> Result<bool> {
+        let tx_hash_str = proof.proof.get("tx_hash")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing tx_hash in proof"))?;
+
+        let tx_hash = TxHash::from_str(tx_hash_str)?;
+
+        // 1. Fetch the transaction
+        let tx = self.client.get_transaction(tx_hash).await?
+            .ok_or_else(|| anyhow::anyhow!("Transaction not found on chain"))?;
+
+        // 2. Verify the input data matches the batch root
+        let expected_root_hex = proof.proof.get("merkle_root")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        
+        let expected_bytes = hex::decode(expected_root_hex)?;
+        
+        if tx.input.as_ref() == expected_bytes.as_slice() {
+            Ok(true)
+        } else {
+            tracing::warn!(
+                "Ethereum verification failed. On-chain data: {:?}, Expected: {:?}",
+                tx.input, expected_bytes
+            );
+            Ok(false)
         }
     }
 }

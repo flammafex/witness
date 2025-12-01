@@ -217,7 +217,15 @@ Add to your `network.json`:
         "api_url": "https://api.cloudflare.com/client/v4/zones/YOUR_ZONE/dns_records",
         "domain": "witness.example.com",
         "api_key": "YOUR_API_KEY"
-      }
+      },
+      {
+	  "type": "blockchain",
+	  "enabled": true,
+	  "priority": 4,
+	  "rpc_url": "https://mainnet.infura.io/v3/YOUR_KEY",
+	  "private_key": "YOUR_GATEWAY_WALLET_PRIVATE_KEY", 
+	  "chain_id": 1
+	  }
     ]
   }
 }
