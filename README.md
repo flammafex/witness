@@ -40,7 +40,7 @@ docker compose up --build
 
 # 2. Timestamp a file (using the CLI inside the container)
 # We use the gateway container to run the CLI tool against itself
-docker compose exec gateway /app/target/release/witness-cli --gateway http://localhost:8080 timestamp --hash $(echo -n "hello" | sha256sum | awk '{print $1}')
+docker compose exec gateway witness-cli --gateway http://localhost:8080 timestamp --hash $(echo -n "hello" | sha256sum | awk '{print $1}')
 ```
 
 ## Core Design Goals
