@@ -68,6 +68,12 @@ services:
     volumes:
       - witness-config:/data
     command: ["witness-node", "--config", "/data/witness1.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - witness-net
 
@@ -81,6 +87,12 @@ services:
     volumes:
       - witness-config:/data
     command: ["witness-node", "--config", "/data/witness2.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - witness-net
 
@@ -94,6 +106,12 @@ services:
     volumes:
       - witness-config:/data
     command: ["witness-node", "--config", "/data/witness3.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - witness-net
 
@@ -108,7 +126,11 @@ services:
       setup:
         condition: service_completed_successfully
       witness-1:
-        condition: service_started
+        condition: service_healthy
+      witness-2:
+        condition: service_healthy
+      witness-3:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
@@ -117,7 +139,13 @@ services:
     environment:
       - RUST_LOG=info,witness_gateway=debug
     # Point config to the shared volume, and db to the persistence volume
-    command: ["witness-gateway", "--config", "/config/network.json", "--database", "/data/gateway.db"]
+    command: ["witness-gateway", "--config", "/config/network.json", "--port", "8080", "--database", "/data/gateway.db"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - witness-net
 

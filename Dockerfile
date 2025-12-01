@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Builder
 # ==============================================================================
-FROM rust:latest as builder
+FROM rust:1.83 as builder
 
 WORKDIR /app
 
@@ -74,8 +74,9 @@ RUN groupadd -r witness && useradd -r -g witness witness
 # Create directory for database and config
 RUN mkdir -p /data && chown -R witness:witness /data
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/target/release/witness-gateway /usr/local/bin/witness-gateway
+COPY --from=builder /app/target/release/witness-cli /usr/local/bin/witness-cli
 
 # Set environment defaults
 ENV RUST_LOG=info
