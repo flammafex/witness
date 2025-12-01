@@ -312,12 +312,26 @@ witness get <hash>
 witness verify <attestation-file>
 ```
 
+#### Verify federated attestation with full trust chain
+```bash
+witness verify-federation <hash>
+```
+
+Shows complete verification report including:
+- Basic attestation details (hash, network, timestamp)
+- Witness signatures
+- Merkle proof (if batched)
+- Cross-anchors from peer networks (if federated)
+- Trust ladder visualization (Phase 1 → Phase 2 → Phase 2.5 → Phase 3)
+
+This provides a comprehensive view of the security guarantees for a timestamped hash.
+
 #### View external anchor proofs
 ```bash
 witness anchors <hash>
 ```
 
-Shows external anchor proofs (Internet Archive, Trillian, etc.) for a timestamped hash. Only available if federation and external anchoring are enabled.
+Shows external anchor proofs (Internet Archive, Trillian, DNS TXT) for a timestamped hash. Only available if federation and external anchoring are enabled.
 
 #### View network config
 ```bash
