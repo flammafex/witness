@@ -153,6 +153,22 @@ impl Storage {
         .execute(&self.pool)
         .await?;
 
+        // Phase 2.5: Merkle proofs for federation verification
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS merkle_proofs (
+                hash TEXT PRIMARY KEY,
+                batch_id INTEGER NOT NULL,
+                merkle_index INTEGER NOT NULL,
+                proof_siblings BLOB NOT NULL,
+                FOREIGN KEY (hash) REFERENCES attestations(hash),
+                FOREIGN KEY (batch_id) REFERENCES batches(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -687,5 +703,80 @@ impl Storage {
         }
 
         Ok(proofs)
+    }
+
+    /// Store merkle proof for an attestation
+    pub async fn store_merkle_proof(
+        &self,
+        hash: &[u8; 32],
+        batch_id: u64,
+        merkle_index: usize,
+        proof_siblings: &[[u8; 32]],
+    ) -> Result<()> {
+        let hash_hex = hex::encode(hash);
+
+        // Serialize proof siblings as concatenated bytes
+        let mut proof_bytes = Vec::new();
+        for sibling in proof_siblings {
+            proof_bytes.extend_from_slice(sibling);
+        }
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO merkle_proofs (hash, batch_id, merkle_index, proof_siblings)
+            VALUES (?1, ?2, ?3, ?4)
+            "#,
+        )
+        .bind(&hash_hex)
+        .bind(batch_id as i64)
+        .bind(merkle_index as i64)
+        .bind(&proof_bytes)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get merkle proof for an attestation
+    pub async fn get_merkle_proof(&self, hash: &[u8; 32]) -> Result<Option<witness_core::MerkleProof>> {
+        let hash_hex = hex::encode(hash);
+
+        let row = sqlx::query(
+            r#"
+            SELECT b.merkle_root, mp.proof_siblings
+            FROM merkle_proofs mp
+            JOIN batches b ON mp.batch_id = b.id
+            WHERE mp.hash = ?1
+            "#,
+        )
+        .bind(&hash_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let merkle_root: Vec<u8> = row.get("merkle_root");
+            let proof_siblings_bytes: Vec<u8> = row.get("proof_siblings");
+
+            // Deserialize proof siblings (each is 32 bytes)
+            let mut siblings = Vec::new();
+            for chunk in proof_siblings_bytes.chunks(32) {
+                if chunk.len() == 32 {
+                    let mut sibling = [0u8; 32];
+                    sibling.copy_from_slice(chunk);
+                    siblings.push(sibling);
+                }
+            }
+
+            let mut root = [0u8; 32];
+            root.copy_from_slice(&merkle_root);
+
+            Ok(Some(witness_core::MerkleProof {
+                leaf: *hash,
+                siblings,
+                root,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }

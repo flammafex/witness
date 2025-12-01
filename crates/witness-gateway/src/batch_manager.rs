@@ -110,6 +110,20 @@ impl BatchManager {
         // Store batch
         let batch_id = self.storage.store_batch(&batch, &leaves).await?;
 
+        // Generate and store merkle proofs for each attestation
+        for (index, leaf) in leaves.iter().enumerate() {
+            if let Some(proof) = merkle_tree.proof(index) {
+                if let Err(e) = self.storage.store_merkle_proof(
+                    leaf,
+                    batch_id as u64,
+                    index,
+                    &proof,
+                ).await {
+                    tracing::error!("Failed to store merkle proof for attestation {}: {}", hex::encode(leaf), e);
+                }
+            }
+        }
+
         tracing::info!(
             "Batch {} created: {} attestations, root: {}",
             batch_id,

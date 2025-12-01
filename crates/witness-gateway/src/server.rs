@@ -52,6 +52,7 @@ impl GatewayServer {
             .route("/v1/verify", post(verify_handler))
             // Phase 2: Federation endpoints
             .route("/v1/federation/anchor", post(federation_anchor_handler))
+            .route("/v1/federation/verify/:hash", get(verify_federation_handler))
             // Phase 3: External anchor endpoints
             .route("/v1/anchors/:hash", get(get_anchors_handler))
             .layer(CorsLayer::permissive())
@@ -421,6 +422,74 @@ async fn get_anchors_handler(
             Ok(Json(Vec::<ExternalAnchorProof>::new()))
         }
     }
+}
+
+async fn verify_federation_handler(
+    State(server): State<GatewayServer>,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::debug!("Verifying federation for hash: {}", hash);
+
+    let hash_bytes = hex::decode(&hash)
+        .map_err(|_| AppError::InvalidHash)?;
+
+    let hash_array: [u8; 32] = hash_bytes
+        .try_into()
+        .map_err(|_| AppError::InvalidHash)?;
+
+    // Get the attestation
+    let attestation = server
+        .storage
+        .get_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Get merkle proof (if batched)
+    let merkle_proof = server
+        .storage
+        .get_merkle_proof(&hash_array)
+        .await?;
+
+    // Get cross-anchors (if batched)
+    let cross_anchors = if let Some(batch_id) = server.storage.get_batch_id_for_attestation(&hash_array).await? {
+        server.storage.get_cross_anchors(batch_id as i64).await?
+    } else {
+        Vec::new()
+    };
+
+    // Get external anchor proofs (if batched)
+    let external_anchors = if let Some(batch_id) = server.storage.get_batch_id_for_attestation(&hash_array).await? {
+        server.storage.get_anchor_proofs(batch_id as u64).await?
+    } else {
+        Vec::new()
+    };
+
+    // Determine verification level
+    let verification_level = if !external_anchors.is_empty() {
+        witness_core::VerificationLevel::Federated {
+            peer_count: cross_anchors.len(),
+        }
+    } else if merkle_proof.is_some() {
+        witness_core::VerificationLevel::Batched
+    } else {
+        witness_core::VerificationLevel::Basic
+    };
+
+    // Build response
+    let federated_attestation = witness_core::FederatedAttestation {
+        attestation,
+        merkle_proof,
+        cross_anchors,
+    };
+
+    let response = witness_core::FederatedVerifyResponse {
+        federated_attestation: Some(federated_attestation),
+        verified: true,
+        verification_level: verification_level.clone(),
+        message: format!("Verification level: {}", verification_level),
+    };
+
+    Ok(Json(response))
 }
 
 // Error handling

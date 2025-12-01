@@ -4,7 +4,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{anchors, get, timestamp, verify};
+use commands::{anchors, get, timestamp, verify, verify_federation};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -72,6 +72,16 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         output: String,
     },
+
+    /// Verify federated attestation with full trust chain
+    VerifyFederation {
+        /// Hash to verify (hex encoded SHA-256)
+        hash: String,
+
+        /// Output format: json or text
+        #[arg(short, long, default_value = "text")]
+        output: String,
+    },
 }
 
 #[tokio::main]
@@ -95,6 +105,9 @@ async fn main() -> Result<()> {
         }
         Commands::Anchors { hash, output } => {
             anchors::run(&cli.gateway, &hash, &output).await?;
+        }
+        Commands::VerifyFederation { hash, output } => {
+            verify_federation::run(&cli.gateway, &hash, &output).await?;
         }
     }
 
