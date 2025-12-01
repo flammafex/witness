@@ -30,6 +30,19 @@ Witness has three operating modes:
 
 3. **Phase 3 - Hardened (external anchors):** ✅ **Now Available!** Batch merkle roots are automatically anchored to immutable public services. This effectively creates an "Optimistic Rollup" for truth—you get the speed of a web API with the finality of Ethereum.
 
+## 🐳 Docker Quickstart
+
+Start the entire network (Gateway + 3 Witnesses) with one command. No Rust installation required.
+
+```bash
+# 1. Start the network
+docker compose up --build
+
+# 2. Timestamp a file (using the CLI inside the container)
+# We use the gateway container to run the CLI tool against itself
+docker compose exec gateway /app/target/release/witness-cli --gateway http://localhost:8080 timestamp --hash $(echo -n "hello" | sha256sum | awk '{print $1}')
+```
+
 ## Core Design Goals
 
 ### 1. Privacy & Sovereignty
