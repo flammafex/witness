@@ -39,7 +39,7 @@ Identity is ephemeral. State is fluid. Witness provides the temporal context wit
 Witness is designed to be **metabolized, not mined**.
 - **No Mining:** We replace Proof-of-Work with lightweight threshold signatures. A Witness node can run on a Raspberry Pi.
 - **No Zombie Servers:** The architecture is efficient and event-driven.
-- **Lazy Demurrage:** By relying on bounded validity windows (in connected protocols like Scarcity), we prevent state bloat and infinite storage requirements.
+- **Lazy Demurrage:** By relying on bounded validity windows (in connected protocols like [Scarcity](https://github.com/flammafex/scarcity)), we prevent state bloat and infinite storage requirements.
 - **Ethical Anchoring:** When we do use a blockchain (Phase 3), we use **Proof-of-Stake Ethereum**, ensuring our carbon footprint remains negligible.
 
 ## Architecture
