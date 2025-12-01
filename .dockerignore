@@ -1,0 +1,11 @@
+target/
+**/*.rs.bk
+.git/
+.env
+*.db
+*.db-shm
+*.db-wal
+node_keys/
+gateway.db
+network.json
+examples/
