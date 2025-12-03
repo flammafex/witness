@@ -14,7 +14,7 @@ if [ "$(id -u)" = "0" ]; then
     fi
 
     # Switch to witness user and execute the command
-    exec su-exec witness "$@"
+    exec gosu witness "$@"
 else
     # Already running as witness user
     exec "$@"
