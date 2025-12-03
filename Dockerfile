@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Builder
 # ==============================================================================
-FROM rust:1.83 as builder
+FROM rust:1.91 as builder
 
 WORKDIR /app
 
@@ -77,7 +77,7 @@ RUN mkdir -p /data && chown -R witness:witness /data
 
 # Copy binaries from builder
 COPY --from=builder /app/target/release/witness-gateway /usr/local/bin/witness-gateway
-COPY --from=builder /app/target/release/witness-cli /usr/local/bin/witness-cli
+COPY --from=builder /app/target/release/witness /usr/local/bin/witness
 
 # Copy entrypoint script
 COPY docker-entrypoint-gateway.sh /usr/local/bin/
