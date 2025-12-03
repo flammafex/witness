@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     // Initialize storage
     // SQLite URLs require three slashes for absolute paths: sqlite:///path
     let db_url = if args.database.is_absolute() {
-        format!("sqlite://{}", args.database.display())
+        format!("sqlite:///{}", args.database.display())
     } else {
         format!("sqlite:{}", args.database.display())
     };
