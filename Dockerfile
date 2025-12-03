@@ -67,7 +67,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     curl \
     sqlite3 \
-    su-exec \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r witness && useradd -r -g witness witness
