@@ -23,6 +23,18 @@ if [ "$(id -u)" = "0" ]; then
     fi
 
     echo "Switching to witness user and executing: $@"
+
+    # Test if witness user can actually write to /data
+    if gosu witness touch /data/test-write.txt 2>&1; then
+        echo "✓ Write test successful - witness user CAN write to /data"
+        gosu witness rm /data/test-write.txt
+    else
+        echo "✗ Write test FAILED - witness user CANNOT write to /data"
+        echo "Attempting to fix with chmod..."
+        chmod 777 /data
+        echo "After chmod 777 - /data permissions: $(ls -ld /data)"
+    fi
+
     # Switch to witness user and execute the command
     exec gosu witness "$@"
 else
