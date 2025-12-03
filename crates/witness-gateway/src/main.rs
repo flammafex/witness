@@ -80,7 +80,12 @@ async fn main() -> Result<()> {
     }
 
     // Initialize storage
-    let db_url = format!("sqlite:{}", args.database.display());
+    // SQLite URLs require three slashes for absolute paths: sqlite:///path
+    let db_url = if args.database.is_absolute() {
+        format!("sqlite://{}", args.database.display())
+    } else {
+        format!("sqlite:{}", args.database.display())
+    };
     let storage = Storage::new(&db_url).await?;
     storage.migrate().await?;
 
