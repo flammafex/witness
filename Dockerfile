@@ -67,6 +67,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     curl \
     sqlite3 \
+    su-exec \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r witness && useradd -r -g witness witness
@@ -78,12 +79,18 @@ RUN mkdir -p /data && chown -R witness:witness /data
 COPY --from=builder /app/target/release/witness-gateway /usr/local/bin/witness-gateway
 COPY --from=builder /app/target/release/witness-cli /usr/local/bin/witness-cli
 
+# Copy entrypoint script
+COPY docker-entrypoint-gateway.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-gateway.sh
+
 # Set environment defaults
 ENV RUST_LOG=info
 
-USER witness
 VOLUME ["/data"]
 EXPOSE 8080
+
+# Use entrypoint to fix permissions before running as witness user
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-gateway.sh"]
 
 # Default command points to data volume
 CMD ["witness-gateway", "--config", "/data/network.json", "--database", "/data/gateway.db"]
