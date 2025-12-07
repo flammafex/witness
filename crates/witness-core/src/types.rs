@@ -63,7 +63,7 @@ pub struct WitnessSignature {
     /// ID of the witness that signed
     pub witness_id: String,
 
-    /// Ed25519 signature bytes
+    /// Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
     pub signature: Vec<u8>,
 }
 

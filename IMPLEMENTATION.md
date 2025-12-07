@@ -280,11 +280,12 @@ pub enum AttestationSignatures {
 - [x] Database schema for batches and cross-anchors
 - [x] 3-network federation example
 
-### ⏸️ Phase 3: Hardening (Mode 3)
-- [ ] Certificate Transparency anchoring
-- [ ] Internet Archive anchoring
-- [ ] DNS TXT records
-- [ ] Physical escrow
+### ✅ Phase 3: Hardening (Mode 3)
+- [x] Internet Archive anchoring
+- [x] Trillian/Tessera (Certificate Transparency) anchoring
+- [x] DNS TXT records
+- [x] Blockchain (Ethereum/EVM) anchoring
+- [ ] Physical escrow (not applicable for digital systems)
 
 ### ✅ Phase 4: BLS Signatures
 - [x] BLS12-381 signature implementation
@@ -299,7 +300,7 @@ pub enum AttestationSignatures {
 - [ ] Rate limiting
 - [ ] Admin API
 - [ ] Witness reputation
-- [ ] Docker deployment
+- [x] Docker deployment (multi-stage Dockerfile with docker-compose)
 
 ### ⏸️ Phase 6: Integrations
 - [ ] Freebird (anonymous submission)
@@ -343,7 +344,7 @@ pub enum AttestationSignatures {
 - ❌ Network partitions (no Byzantine fault tolerance)
 - ❌ Denial of service (no rate limiting yet)
 
-Phase 3 (External Anchors) and Phase 5 (Production Features) address remaining gaps.
+Phase 3 (External Anchors) is now implemented, providing additional security through external anchoring. Phase 5 (Production Features) will address remaining gaps like rate limiting.
 
 ## Performance Characteristics
 
