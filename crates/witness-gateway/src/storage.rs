@@ -688,4 +688,140 @@ impl Storage {
 
         Ok(proofs)
     }
+
+    // ========== Admin Dashboard Stats ==========
+
+    /// Count total attestations
+    pub async fn count_attestations(&self) -> Result<u64> {
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM attestations"#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+
+    /// Count attestations since a given timestamp
+    pub async fn count_attestations_since(&self, since: u64) -> Result<u64> {
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#,
+        )
+        .bind(since as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+
+    /// Count total batches
+    pub async fn count_batches(&self) -> Result<u64> {
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM batches"#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+
+    /// Get recent attestations for the dashboard
+    pub async fn get_recent_attestations(&self, limit: usize) -> Result<Vec<SignedAttestation>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT hash, timestamp, network_id, sequence
+            FROM attestations
+            ORDER BY timestamp DESC, sequence DESC
+            LIMIT ?1
+            "#,
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut attestations = Vec::new();
+
+        for row in rows {
+            let hash_str: String = row.get("hash");
+            let hash_bytes = hex::decode(&hash_str)?;
+            let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+
+            let attestation = Attestation {
+                hash: hash_array,
+                timestamp: row.get::<i64, _>("timestamp") as u64,
+                network_id: row.get("network_id"),
+                sequence: row.get::<i64, _>("sequence") as u64,
+            };
+
+            // Get signatures
+            let sig_rows = sqlx::query(
+                r#"
+                SELECT witness_id, signature
+                FROM signatures
+                WHERE hash = ?1
+                "#,
+            )
+            .bind(&hash_str)
+            .fetch_all(&self.pool)
+            .await?;
+
+            let signatures = if !sig_rows.is_empty() {
+                let first_witness_id: String = sig_rows[0].get("witness_id");
+
+                if first_witness_id.starts_with("BLS_AGGREGATED:") {
+                    let signature: Vec<u8> = sig_rows[0].get("signature");
+                    let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
+                    let signers: Vec<String> =
+                        signers_str.split(',').map(|s| s.to_string()).collect();
+
+                    AttestationSignatures::Aggregated { signature, signers }
+                } else {
+                    let witness_sigs: Vec<WitnessSignature> = sig_rows
+                        .iter()
+                        .map(|row| WitnessSignature {
+                            witness_id: row.get("witness_id"),
+                            signature: row.get("signature"),
+                        })
+                        .collect();
+
+                    AttestationSignatures::MultiSig {
+                        signatures: witness_sigs,
+                    }
+                }
+            } else {
+                AttestationSignatures::MultiSig {
+                    signatures: Vec::new(),
+                }
+            };
+
+            attestations.push(SignedAttestation {
+                attestation,
+                signatures,
+            });
+        }
+
+        Ok(attestations)
+    }
+
+    /// Get anchor stats for a provider
+    pub async fn get_anchor_stats(&self, provider: &str) -> Result<(Option<u64>, u64)> {
+        let row = sqlx::query(
+            r#"
+            SELECT MAX(timestamp) as last_time, COUNT(*) as total
+            FROM external_anchor_proofs
+            WHERE provider = ?1
+            "#,
+        )
+        .bind(provider)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let last_time: Option<i64> = row.get("last_time");
+        let total: i64 = row.get("total");
+
+        Ok((last_time.map(|t| t as u64), total as u64))
+    }
 }

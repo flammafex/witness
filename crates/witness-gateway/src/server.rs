@@ -13,6 +13,7 @@ use witness_core::{
     VerifyResponse,
 };
 
+use crate::admin::{admin_router, AdminState};
 use crate::batch_manager::BatchManager;
 use crate::federation_client::FederationClient;
 use crate::storage::Storage;
@@ -43,8 +44,8 @@ impl GatewayServer {
         }
     }
 
-    pub async fn run(self, port: u16) -> anyhow::Result<()> {
-        let app = Router::new()
+    pub async fn run(self, port: u16, admin_state: Option<AdminState>) -> anyhow::Result<()> {
+        let mut app = Router::new()
             .route("/health", get(health_handler))
             .route("/v1/config", get(config_handler))
             .route("/v1/timestamp", post(timestamp_handler))
@@ -56,6 +57,11 @@ impl GatewayServer {
             .route("/v1/anchors/:hash", get(get_anchors_handler))
             .layer(CorsLayer::permissive())
             .with_state(self);
+
+        // Add admin dashboard if enabled
+        if let Some(admin) = admin_state {
+            app = app.nest("/admin", admin_router(admin));
+        }
 
         let addr = format!("0.0.0.0:{}", port);
         let listener = tokio::net::TcpListener::bind(&addr).await?;

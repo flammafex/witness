@@ -1,3 +1,4 @@
+mod admin;
 mod anchor_manager;
 mod anchor_providers;
 mod batch_manager;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use tracing_subscriber;
 use witness_core::NetworkConfig;
 
+use admin::AdminState;
 use anchor_manager::AnchorManager;
 use batch_manager::BatchManager;
 use federation_client::FederationClient;
@@ -34,6 +36,10 @@ struct Args {
     /// Path to SQLite database
     #[arg(short, long, default_value = "gateway.db")]
     database: PathBuf,
+
+    /// Enable admin dashboard UI at /admin
+    #[arg(long, default_value = "false")]
+    admin_ui: bool,
 }
 
 #[tokio::main]
@@ -113,6 +119,14 @@ async fn main() -> Result<()> {
     // Start batch manager background task
     batch_manager.clone().start();
 
+    // Create admin state if admin UI is enabled
+    let admin_state = if args.admin_ui {
+        tracing::info!("Admin dashboard enabled at /admin");
+        Some(AdminState::new(network_config.clone(), storage.clone()))
+    } else {
+        None
+    };
+
     // Start server
     let server = GatewayServer::new(
         network_config,
@@ -120,7 +134,7 @@ async fn main() -> Result<()> {
         batch_manager,
         federation_client,
     );
-    server.run(args.port).await?;
+    server.run(args.port, admin_state).await?;
 
     Ok(())
 }
