@@ -67,6 +67,7 @@ Client → Gateway → Witnesses (threshold sign) → Signed Attestation
 - **witness-node:** Individual witness node that signs attestations
 - **witness-gateway:** Aggregates requests, fans out to witnesses, collects/aggregates signatures
 - **witness-cli:** Command-line tool for timestamping files
+- **Admin Dashboard:** Optional web UI for monitoring (`--admin-ui` flag)
 
 ## Quick Start
 
