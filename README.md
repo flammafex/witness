@@ -100,6 +100,39 @@ Timestamp a file:
 cargo run -p witness-cli -- timestamp --file README.md --save attestation.json
 ```
 
+## ☁️ Production Deployment
+
+Deploy a censorship-resistant multi-gateway network for **under $20/month**.
+
+### Multi-Gateway Quorum
+
+For production use with [Scarcity](https://github.com/flammafex/scarcity), deploy **3 independent Witness networks** across different datacenters. Clients query all gateways and require 2-of-3 agreement—no single gateway can censor or forge timestamps.
+
+```
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  Gateway A  │  │  Gateway B  │  │  Gateway C  │
+│  Frankfurt  │  │  Nuremberg  │  │  Helsinki   │
+│ 3 witnesses │  │ 3 witnesses │  │ 3 witnesses │
+└─────────────┘  └─────────────┘  └─────────────┘
+       │                │                │
+       └────────────────┼────────────────┘
+                        ▼
+              Client queries all 3
+              Requires 2-of-3 agreement
+```
+
+### Recommended Setup (Hetzner Cloud)
+
+| Server | Location | Role | Spec | Cost |
+|--------|----------|------|------|------|
+| VPS 1 | FSN1 (DE) | Gateway A + Witness B3 + Witness C2 | CX22 | ~€6/mo |
+| VPS 2 | NBG1 (DE) | Gateway B + Witness C3 + Witness A2 | CX22 | ~€6/mo |
+| VPS 3 | HEL1 (FI) | Gateway C + Witness A3 + Witness B2 | CX22 | ~€6/mo |
+
+**Total: ~€18/month** for a fault-tolerant, geographically distributed network.
+
+Each datacenter hosts witnesses from *all* networks—no single datacenter failure takes down any network.
+
 ## Advanced Configuration
 
 ### External Anchoring (Phase 3)
