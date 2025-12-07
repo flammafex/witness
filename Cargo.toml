@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["The Carpocratian Church of Commonaltity and Equality, Inc."]
@@ -19,7 +19,7 @@ description = "A federated threshold witness timestamping system"
 
 [workspace.dependencies]
 # Core dependencies
-witness-core = { path = "crates/witness-core", version = "0.1.1" }
+witness-core = { path = "crates/witness-core", version = "0.1.2" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
