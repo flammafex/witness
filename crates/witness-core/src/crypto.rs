@@ -1,4 +1,3 @@
-use blst::min_sig::PublicKey as BlsPublicKey;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
