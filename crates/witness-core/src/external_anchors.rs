@@ -58,7 +58,7 @@ fn default_priority() -> u32 {
 }
 
 /// Configuration for external anchoring
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalAnchorsConfig {
     /// Whether external anchoring is enabled
     #[serde(default)]
@@ -75,6 +75,17 @@ pub struct ExternalAnchorsConfig {
     /// List of anchor providers
     #[serde(default)]
     pub providers: Vec<AnchorProviderConfig>,
+}
+
+impl Default for ExternalAnchorsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            anchor_period: default_anchor_period(),
+            minimum_required: default_minimum_required(),
+            providers: Vec::new(),
+        }
+    }
 }
 
 fn default_anchor_period() -> u64 {

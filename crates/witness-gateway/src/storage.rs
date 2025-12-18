@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{sqlite::SqlitePool, Row};
 use witness_core::{
     signature_scheme::AttestationSignatures, Attestation, AttestationBatch, CrossAnchor,
-    ExternalAnchorProof, SignedAttestation, WitnessSignature,
+    ExternalAnchorProof, MerkleProof, MerkleTree, SignedAttestation, WitnessSignature,
 };
 
 pub struct Storage {
@@ -920,5 +920,97 @@ impl Storage {
         let total: i64 = row.get("total");
 
         Ok((last_time.map(|t| t as u64), total as u64))
+    }
+
+    // ========== Light Client Support: Merkle Proofs ==========
+
+    /// Get all attestation hashes in a batch, ordered by merkle_index
+    pub async fn get_batch_attestation_hashes(&self, batch_id: i64) -> Result<Vec<[u8; 32]>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT hash FROM batch_attestations
+            WHERE batch_id = ?1
+            ORDER BY merkle_index ASC
+            "#,
+        )
+        .bind(batch_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut hashes = Vec::new();
+        for row in rows {
+            let hash_str: String = row.get("hash");
+            let hash_bytes = hex::decode(&hash_str)?;
+            let hash_array: [u8; 32] = hash_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid hash length"))?;
+            hashes.push(hash_array);
+        }
+
+        Ok(hashes)
+    }
+
+    /// Get the merkle index for an attestation within its batch
+    pub async fn get_merkle_index_for_attestation(
+        &self,
+        hash: &[u8; 32],
+    ) -> Result<Option<(i64, usize)>> {
+        let hash_hex = hex::encode(hash);
+
+        let row = sqlx::query(
+            r#"
+            SELECT batch_id, merkle_index FROM batch_attestations
+            WHERE hash = ?1
+            "#,
+        )
+        .bind(&hash_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let batch_id: i64 = row.get("batch_id");
+                let merkle_index: i64 = row.get("merkle_index");
+                Ok(Some((batch_id, merkle_index as usize)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Generate a merkle proof for an attestation
+    pub async fn get_merkle_proof_for_attestation(
+        &self,
+        hash: &[u8; 32],
+    ) -> Result<Option<MerkleProof>> {
+        // Get the batch ID and merkle index for this attestation
+        let Some((batch_id, merkle_index)) = self.get_merkle_index_for_attestation(hash).await?
+        else {
+            return Ok(None);
+        };
+
+        // Get the batch to get the merkle root
+        let Some(batch) = self.get_batch(batch_id).await? else {
+            return Ok(None);
+        };
+
+        // Get all hashes in the batch to reconstruct the tree
+        let leaves = self.get_batch_attestation_hashes(batch_id).await?;
+
+        if leaves.is_empty() {
+            return Ok(None);
+        }
+
+        // Reconstruct the merkle tree and generate proof
+        let tree = MerkleTree::new(leaves);
+
+        let Some(siblings) = tree.proof(merkle_index) else {
+            return Ok(None);
+        };
+
+        Ok(Some(MerkleProof {
+            leaf: *hash,
+            siblings,
+            root: batch.merkle_root,
+        }))
     }
 }

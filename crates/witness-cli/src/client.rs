@@ -3,7 +3,8 @@ use reqwest::Client;
 use std::time::Duration;
 use witness_core::{
     AnonymousTimestampRequest, AnonymousTimestampResponse, ExternalAnchorProof, NetworkConfig,
-    SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
+    ProofResponse, SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest,
+    VerifyResponse,
 };
 
 pub struct WitnessClient {
@@ -196,5 +197,30 @@ impl WitnessClient {
             .context("Failed to parse gateway response")?;
 
         Ok(anonymous_response)
+    }
+
+    /// Get a merkle proof for an attestation (for offline/light client verification)
+    pub async fn get_proof(&self, hash: &str) -> Result<ProofResponse> {
+        let url = format!("{}/v1/proof/{}", self.gateway_url, hash);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to gateway")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Gateway returned error {}: {}", status, error_text);
+        }
+
+        let proof_response: ProofResponse = response
+            .json()
+            .await
+            .context("Failed to parse gateway response")?;
+
+        Ok(proof_response)
     }
 }

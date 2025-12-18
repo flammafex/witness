@@ -304,7 +304,7 @@ pub enum AttestationSignatures {
 ### ✅ Phase 6: Integrations (Freebird)
 - [x] Freebird (anonymous submission)
 - [ ] WebSocket notifications
-- [ ] Light client support
+- [x] Light client support
 
 #### Freebird Integration Details
 
@@ -376,6 +376,55 @@ witness anonymous --file secret.txt \
 - No user identity or tracking information stored
 - Only hash and verification timestamp recorded
 - IP addresses not logged for anonymous submissions
+
+#### Light Client Support Details
+
+**What is Light Client Support?**
+Light clients can verify attestations offline using merkle proofs without trusting the gateway. Once an attestation is included in a batch, a compact proof enables independent verification.
+
+**Integration Components:**
+
+1. **Storage Layer** (`storage.rs`)
+   - `get_batch_attestation_hashes()`: Retrieve all hashes in a batch
+   - `get_merkle_index_for_attestation()`: Find an attestation's position in its batch
+   - `get_merkle_proof_for_attestation()`: Generate a complete merkle proof
+
+2. **API Endpoint** (`GET /v1/proof/:hash`)
+   - Returns: Attestation, merkle proof, batch info, external anchors
+   - Error 404 if attestation not found or not yet batched
+   - JSON response suitable for offline storage
+
+3. **Response Types** (`ProofResponse` in `types.rs`)
+   - `attestation`: The signed attestation with threshold signatures
+   - `merkle_proof`: Leaf hash, sibling hashes, and root
+   - `batch`: Batch ID, merkle root, period, attestation count
+   - `external_anchors`: Internet Archive, Ethereum, etc.
+
+4. **CLI Support** (`witness proof` command)
+   - `--hash`: Fetch proof from gateway
+   - `--file`: Verify saved proof offline
+   - `--save`: Save proof to JSON file
+   - `--output`: json or text format
+
+**Example Usage:**
+```bash
+# Fetch and save a proof
+witness proof --hash abc123... --save proof.json
+
+# Verify offline (no network needed)
+witness proof --file proof.json
+```
+
+**Verification Steps:**
+1. Verify leaf hash matches attestation hash
+2. Verify merkle proof (leaf is in tree with stated root)
+3. Verify proof root matches batch merkle root
+4. Optionally verify external anchors for hard finality
+
+**Trust Model:**
+- With a proof, clients only need to trust the external anchors
+- No dependency on gateway availability or honesty after proof is obtained
+- Multiple external anchors (Internet Archive, Ethereum) provide independent verification
 
 ## Testing Status
 

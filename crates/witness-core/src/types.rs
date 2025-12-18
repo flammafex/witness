@@ -326,3 +326,24 @@ pub struct FreebirdVerifyResponse {
     #[serde(default)]
     pub verified_at: i64,
 }
+
+// ============================================================================
+// Light Client Support: Merkle Proof Types
+// ============================================================================
+
+/// Response containing a merkle proof for offline verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofResponse {
+    /// The signed attestation
+    pub attestation: SignedAttestation,
+
+    /// Merkle proof showing inclusion in a batch
+    pub merkle_proof: crate::MerkleProof,
+
+    /// Batch information
+    pub batch: crate::AttestationBatch,
+
+    /// External anchor proofs for this batch (if available)
+    #[serde(default)]
+    pub external_anchors: Vec<crate::ExternalAnchorProof>,
+}

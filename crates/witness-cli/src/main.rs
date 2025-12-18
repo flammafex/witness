@@ -4,7 +4,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{anchors, anonymous, get, timestamp, verify};
+use commands::{anchors, anonymous, get, proof, timestamp, verify};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -103,6 +103,25 @@ enum Commands {
         #[arg(short, long)]
         save: Option<String>,
     },
+
+    /// Get merkle proof for offline/light client verification
+    Proof {
+        /// Hash to get proof for (hex encoded SHA-256)
+        #[arg(long, conflicts_with = "file")]
+        hash: Option<String>,
+
+        /// Verify a saved proof file offline (no network required)
+        #[arg(short, long, conflicts_with = "hash")]
+        file: Option<String>,
+
+        /// Output format: json or text
+        #[arg(short, long, default_value = "text")]
+        output: String,
+
+        /// Save proof to file
+        #[arg(short, long)]
+        save: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -129,6 +148,17 @@ async fn main() -> Result<()> {
         }
         Commands::Anonymous { file, hash, token, exp, epoch, output, save } => {
             anonymous::run(&cli.gateway, file, hash, token, exp, epoch, &output, save).await?;
+        }
+        Commands::Proof { hash, file, output, save } => {
+            if let Some(proof_file) = file {
+                // Offline verification from saved proof file
+                proof::verify_from_file(&proof_file, &output)?;
+            } else if let Some(hash_str) = hash {
+                // Fetch proof from gateway
+                proof::run(&cli.gateway, &hash_str, &output, save.as_deref(), false).await?;
+            } else {
+                anyhow::bail!("Either --hash or --file must be provided");
+            }
         }
     }
 

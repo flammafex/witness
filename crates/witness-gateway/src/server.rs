@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use witness_core::{
     AnonymousTimestampRequest, AnonymousTimestampResponse, Attestation, CrossAnchorRequest,
-    CrossAnchorResponse, ExternalAnchorProof, NetworkConfig, SignatureScheme, SignedAttestation,
-    TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
+    CrossAnchorResponse, ExternalAnchorProof, NetworkConfig, ProofResponse, SignatureScheme,
+    SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
 };
 
 use crate::admin::{admin_router, AdminState};
@@ -59,6 +59,8 @@ impl GatewayServer {
             .route("/v1/federation/anchor", post(federation_anchor_handler))
             // Phase 3: External anchor endpoints
             .route("/v1/anchors/:hash", get(get_anchors_handler))
+            // Light client: Merkle proof endpoint
+            .route("/v1/proof/:hash", get(get_proof_handler))
             // Phase 6: Freebird anonymous submission
             .route("/v1/anonymous/timestamp", post(anonymous_timestamp_handler))
             .layer(CorsLayer::permissive())
@@ -435,6 +437,60 @@ async fn get_anchors_handler(
     }
 }
 
+// Light client: Merkle proof handler for offline verification
+async fn get_proof_handler(
+    State(server): State<GatewayServer>,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::debug!("Looking up merkle proof for hash: {}", hash);
+
+    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
+
+    let hash_array: [u8; 32] = hash_bytes
+        .try_into()
+        .map_err(|_| AppError::InvalidHash)?;
+
+    // Get the attestation
+    let attestation = server
+        .storage
+        .get_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Get the merkle proof
+    let merkle_proof = server
+        .storage
+        .get_merkle_proof_for_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotBatched)?;
+
+    // Get the batch ID to retrieve batch info and external anchors
+    let batch_id = server
+        .storage
+        .get_batch_id_for_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotBatched)?;
+
+    let batch = server
+        .storage
+        .get_batch(batch_id)
+        .await?
+        .ok_or(AppError::InternalError)?;
+
+    // Get external anchor proofs for this batch
+    let external_anchors = server
+        .storage
+        .get_anchor_proofs(batch_id as u64)
+        .await?;
+
+    Ok(Json(ProofResponse {
+        attestation,
+        merkle_proof,
+        batch,
+        external_anchors,
+    }))
+}
+
 // Phase 6: Freebird anonymous submission handler
 async fn anonymous_timestamp_handler(
     State(server): State<GatewayServer>,
@@ -638,6 +694,7 @@ async fn anonymous_timestamp_handler(
 enum AppError {
     InvalidHash,
     NotFound,
+    NotBatched,
     InvalidSignature,
     InsufficientSignatures { got: usize, required: usize },
     InternalError,
@@ -665,6 +722,10 @@ impl IntoResponse for AppError {
         let (status, message) = match self {
             AppError::InvalidHash => (StatusCode::BAD_REQUEST, "Invalid hash format".to_string()),
             AppError::NotFound => (StatusCode::NOT_FOUND, "Attestation not found".to_string()),
+            AppError::NotBatched => (
+                StatusCode::NOT_FOUND,
+                "Attestation exists but has not been included in a batch yet. Retry after batch period.".to_string(),
+            ),
             AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature".to_string()),
             AppError::InsufficientSignatures { got, required } => (
                 StatusCode::SERVICE_UNAVAILABLE,

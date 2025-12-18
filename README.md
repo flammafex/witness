@@ -19,6 +19,7 @@ Witness is a federated witness network that provides threshold-signed timestamps
 - **Federated Architecture:** Multiple independent networks can cross-anchor for additional security.
 - **Privacy-Preserving:** Only hashes are submitted, not content.
 - **Anonymous Submissions:** Optional Freebird integration enables unlinkable, anonymous timestamping.
+- **Light Client Support:** Merkle proofs enable offline verification without trusting the gateway.
 - **Simple Integration:** Easy-to-use CLI and REST API.
 
 ## CAN I GET A
@@ -99,6 +100,16 @@ cd witness
 Timestamp a file:
 ```bash
 cargo run -p witness-cli -- timestamp --file README.md --save attestation.json
+```
+
+Get a merkle proof for offline verification:
+```bash
+cargo run -p witness-cli -- proof --hash <hash> --save proof.json
+```
+
+Verify a proof offline (no network needed):
+```bash
+cargo run -p witness-cli -- proof --file proof.json
 ```
 
 Anonymous timestamp (with Freebird token):
@@ -230,6 +241,38 @@ witness anonymous --file document.pdf \
   --epoch 42 \
   --output text
 ```
+
+### Light Client Support
+
+Light clients can verify attestations offline using merkle proofs. After an attestation is included in a batch, you can request a proof that includes:
+
+- The signed attestation with threshold signatures
+- A merkle proof showing inclusion in the batch
+- Batch metadata (merkle root, period, attestation count)
+- External anchor proofs (if the batch has been anchored)
+
+**API Endpoint:**
+```
+GET /v1/proof/:hash
+```
+
+**CLI Usage:**
+```bash
+# Fetch and save a proof
+witness proof --hash <sha256_hash> --save proof.json
+
+# Verify a saved proof offline (no network needed)
+witness proof --file proof.json
+```
+
+**Offline Verification:**
+With a saved proof, clients can cryptographically verify:
+1. The attestation hash matches the leaf in the merkle proof
+2. The merkle proof is valid (the leaf is included in the tree)
+3. The merkle root matches the batch's published root
+4. External anchors (e.g., Internet Archive, Ethereum) provide independent verification
+
+This enables trust-minimized verification without relying on the gateway being online or honest.
 
 ## FAQ
 
