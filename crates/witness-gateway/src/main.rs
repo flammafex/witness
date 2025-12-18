@@ -4,6 +4,7 @@ mod anchor_providers;
 mod batch_manager;
 mod federation_client;
 mod freebird_client;
+mod notifications;
 mod server;
 mod storage;
 mod witness_client;
@@ -20,6 +21,7 @@ use anchor_manager::AnchorManager;
 use batch_manager::BatchManager;
 use federation_client::FederationClient;
 use freebird_client::FreebirdClient;
+use notifications::NotificationBroadcaster;
 use server::GatewayServer;
 use storage::Storage;
 
@@ -138,6 +140,10 @@ async fn main() -> Result<()> {
     // Start batch manager background task
     batch_manager.clone().start();
 
+    // Initialize notification broadcaster (Phase 6)
+    let broadcaster = Arc::new(NotificationBroadcaster::new(network_config.id.clone()));
+    tracing::info!("WebSocket notifications enabled at /v1/ws");
+
     // Create admin state if admin UI is enabled
     let admin_state = if args.admin_ui {
         tracing::info!("Admin dashboard enabled at /admin");
@@ -153,6 +159,7 @@ async fn main() -> Result<()> {
         batch_manager,
         federation_client,
         freebird_client,
+        broadcaster,
     );
     server.run(args.port, admin_state).await?;
 

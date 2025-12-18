@@ -20,6 +20,7 @@ Witness is a federated witness network that provides threshold-signed timestamps
 - **Privacy-Preserving:** Only hashes are submitted, not content.
 - **Anonymous Submissions:** Optional Freebird integration enables unlinkable, anonymous timestamping.
 - **Light Client Support:** Merkle proofs enable offline verification without trusting the gateway.
+- **Real-time Notifications:** WebSocket support for instant updates on new attestations and batches.
 - **Simple Integration:** Easy-to-use CLI and REST API.
 
 ## CAN I GET A
@@ -115,6 +116,11 @@ cargo run -p witness-cli -- proof --file proof.json
 Anonymous timestamp (with Freebird token):
 ```bash
 cargo run -p witness-cli -- anonymous --file README.md --token <freebird_token> --exp <expiration> --epoch <epoch>
+```
+
+Subscribe to real-time notifications:
+```bash
+cargo run -p witness-cli -- subscribe
 ```
 
 ## ☁️ Production Deployment
@@ -273,6 +279,59 @@ With a saved proof, clients can cryptographically verify:
 4. External anchors (e.g., Internet Archive, Ethereum) provide independent verification
 
 This enables trust-minimized verification without relying on the gateway being online or honest.
+
+### Real-time Notifications (WebSocket)
+
+Subscribe to real-time notifications for attestations, batch closures, and external anchor completions via WebSocket.
+
+**API Endpoint:**
+```
+WS /v1/ws
+```
+
+**Notification Types:**
+- `attestation` - New attestation created (includes anonymous submissions)
+- `batch_closed` - Batch was closed with merkle root
+- `anchor_completed` - External anchor (Internet Archive, Ethereum, etc.) completed
+- `connected` - Connection established (sent on connect)
+
+**CLI Usage:**
+```bash
+# Subscribe to all notifications
+witness subscribe
+
+# Subscribe to specific types
+witness subscribe --types attestation,batch_closed
+
+# Output as JSON
+witness subscribe --output json
+
+# Receive only N notifications then exit
+witness subscribe --count 10
+```
+
+**Message Format:**
+```json
+{
+  "type": "attestation",
+  "timestamp": 1734567890,
+  "payload": {
+    "hash": "abc123...",
+    "sequence": 42,
+    "network_id": "witness-net",
+    "anonymous": false
+  }
+}
+```
+
+**Subscription Management:**
+Clients can dynamically subscribe/unsubscribe to specific notification types by sending:
+```json
+{
+  "subscribe": ["attestation", "batch_closed"],
+  "unsubscribe": ["anchor_completed"]
+}
+```
 
 ## FAQ
 

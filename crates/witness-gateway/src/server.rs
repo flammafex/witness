@@ -1,22 +1,28 @@
 use axum::{
-    extract::State,
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
+    },
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use witness_core::{
     AnonymousTimestampRequest, AnonymousTimestampResponse, Attestation, CrossAnchorRequest,
     CrossAnchorResponse, ExternalAnchorProof, NetworkConfig, ProofResponse, SignatureScheme,
     SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
+    WsSubscription,
 };
 
 use crate::admin::{admin_router, AdminState};
 use crate::batch_manager::BatchManager;
 use crate::federation_client::FederationClient;
 use crate::freebird_client::FreebirdClient;
+use crate::notifications::{ClientSubscription, NotificationBroadcaster};
 use crate::storage::Storage;
 use crate::witness_client::WitnessClient;
 
@@ -28,6 +34,7 @@ pub struct GatewayServer {
     batch_manager: Arc<BatchManager>,
     federation_client: Arc<FederationClient>,
     freebird_client: Arc<FreebirdClient>,
+    broadcaster: Arc<NotificationBroadcaster>,
 }
 
 impl GatewayServer {
@@ -37,6 +44,7 @@ impl GatewayServer {
         batch_manager: Arc<BatchManager>,
         federation_client: Arc<FederationClient>,
         freebird_client: Arc<FreebirdClient>,
+        broadcaster: Arc<NotificationBroadcaster>,
     ) -> Self {
         Self {
             config,
@@ -45,6 +53,7 @@ impl GatewayServer {
             batch_manager,
             federation_client,
             freebird_client,
+            broadcaster,
         }
     }
 
@@ -63,6 +72,8 @@ impl GatewayServer {
             .route("/v1/proof/:hash", get(get_proof_handler))
             // Phase 6: Freebird anonymous submission
             .route("/v1/anonymous/timestamp", post(anonymous_timestamp_handler))
+            // Phase 6: WebSocket notifications
+            .route("/v1/ws", get(ws_handler))
             .layer(CorsLayer::permissive())
             .with_state(self);
 
@@ -232,6 +243,13 @@ async fn timestamp_handler(
 
     // Store attestation
     server.storage.store_attestation(&signed).await?;
+
+    // Broadcast notification
+    server.broadcaster.notify_attestation(
+        &signed.attestation.hash,
+        signed.attestation.sequence,
+        false, // not anonymous
+    );
 
     tracing::info!(
         "Successfully timestamped hash {} with sequence {}",
@@ -677,6 +695,13 @@ async fn anonymous_timestamp_handler(
         .mark_anonymous(&hash, verify_result.verified_at)
         .await?;
 
+    // Broadcast notification (anonymous flag = true)
+    server.broadcaster.notify_attestation(
+        &signed.attestation.hash,
+        signed.attestation.sequence,
+        true, // anonymous submission
+    );
+
     tracing::info!(
         "Successfully timestamped hash {} anonymously with sequence {}",
         request.hash,
@@ -688,6 +713,113 @@ async fn anonymous_timestamp_handler(
         anonymous: true,
         freebird_verified_at: verify_result.verified_at,
     }))
+}
+
+// Phase 6: WebSocket handler for real-time notifications
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(server): State<GatewayServer>,
+) -> impl IntoResponse {
+    tracing::info!("New WebSocket connection request");
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, server))
+}
+
+async fn handle_ws_connection(socket: WebSocket, server: GatewayServer) {
+    let (mut sender, mut receiver) = socket.split();
+
+    // Subscribe to notifications
+    let mut broadcast_rx = server.broadcaster.subscribe();
+
+    // Track client subscriptions (default: all enabled)
+    let mut subscription = ClientSubscription::new();
+
+    // Send connected message
+    let connected_notification = server
+        .broadcaster
+        .create_connected_notification(subscription.list());
+
+    if let Ok(json) = serde_json::to_string(&connected_notification) {
+        if sender.send(Message::Text(json)).await.is_err() {
+            tracing::debug!("Failed to send connected message, client disconnected");
+            return;
+        }
+    }
+
+    tracing::info!(
+        "WebSocket client connected, subscribers={}",
+        server.broadcaster.subscriber_count()
+    );
+
+    // Handle both incoming messages and broadcast notifications
+    loop {
+        tokio::select! {
+            // Handle incoming messages from client (subscription management)
+            msg = receiver.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        // Try to parse as subscription request
+                        if let Ok(sub_request) = serde_json::from_str::<WsSubscription>(&text) {
+                            if !sub_request.subscribe.is_empty() {
+                                subscription.subscribe(&sub_request.subscribe);
+                                tracing::debug!("Client subscribed to: {:?}", sub_request.subscribe);
+                            }
+                            if !sub_request.unsubscribe.is_empty() {
+                                subscription.unsubscribe(&sub_request.unsubscribe);
+                                tracing::debug!("Client unsubscribed from: {:?}", sub_request.unsubscribe);
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) => {
+                        tracing::debug!("WebSocket client sent close frame");
+                        break;
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        if sender.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => {
+                        tracing::debug!("WebSocket stream ended");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Forward broadcast notifications to client
+            notification = broadcast_rx.recv() => {
+                match notification {
+                    Ok(notif) => {
+                        // Check if client is subscribed to this notification type
+                        if subscription.is_subscribed(&notif.notification_type) {
+                            if let Ok(json) = serde_json::to_string(&notif) {
+                                if sender.send(Message::Text(json)).await.is_err() {
+                                    tracing::debug!("Failed to send notification, client disconnected");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("WebSocket client lagged by {} messages", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Broadcast channel closed");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        "WebSocket client disconnected, remaining subscribers={}",
+        server.broadcaster.subscriber_count().saturating_sub(1)
+    );
 }
 
 // Error handling

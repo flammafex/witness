@@ -4,7 +4,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{anchors, anonymous, get, proof, timestamp, verify};
+use commands::{anchors, anonymous, get, proof, subscribe, timestamp, verify};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -122,6 +122,22 @@ enum Commands {
         #[arg(short, long)]
         save: Option<String>,
     },
+
+    /// Subscribe to real-time notifications via WebSocket
+    Subscribe {
+        /// Notification types to subscribe to (attestation, batch, anchor)
+        /// If not specified, subscribes to all types
+        #[arg(short, long, value_delimiter = ',')]
+        types: Vec<String>,
+
+        /// Output format: json or text
+        #[arg(short, long, default_value = "text")]
+        output: String,
+
+        /// Exit after receiving N notifications
+        #[arg(short, long)]
+        count: Option<usize>,
+    },
 }
 
 #[tokio::main]
@@ -159,6 +175,9 @@ async fn main() -> Result<()> {
             } else {
                 anyhow::bail!("Either --hash or --file must be provided");
             }
+        }
+        Commands::Subscribe { types, output, count } => {
+            subscribe::run(&cli.gateway, &types, &output, count).await?;
         }
     }
 

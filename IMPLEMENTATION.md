@@ -303,7 +303,7 @@ pub enum AttestationSignatures {
 
 ### ✅ Phase 6: Integrations (Freebird)
 - [x] Freebird (anonymous submission)
-- [ ] WebSocket notifications
+- [x] WebSocket notifications
 - [x] Light client support
 
 #### Freebird Integration Details
@@ -425,6 +425,96 @@ witness proof --file proof.json
 - With a proof, clients only need to trust the external anchors
 - No dependency on gateway availability or honesty after proof is obtained
 - Multiple external anchors (Internet Archive, Ethereum) provide independent verification
+
+#### WebSocket Notifications Details
+
+**What are WebSocket Notifications?**
+Real-time event notifications via WebSocket allow clients to receive instant updates when attestations are created, batches are closed, or external anchors complete without polling.
+
+**Integration Components:**
+
+1. **Notification Types** (`types.rs` in `witness-core`)
+   - `NotificationType`: Enum of event types (attestation, batch_closed, anchor_completed, connected)
+   - `WsNotification`: Notification message with type, timestamp, and payload
+   - `WsPayload`: Typed payload variants for each notification type
+   - `WsSubscription`: Client subscription management request
+
+2. **Notification Broadcaster** (`notifications.rs` in `witness-gateway`)
+   - `NotificationBroadcaster`: Manages broadcast channel and notification dispatch
+   - `ClientSubscription`: Per-client subscription state management
+   - Uses tokio broadcast channel for efficient fan-out to multiple clients
+   - Methods: `notify_attestation()`, `notify_batch_closed()`, `notify_anchor_completed()`
+
+3. **WebSocket Endpoint** (`GET /v1/ws`)
+   - Upgrades HTTP connection to WebSocket
+   - Sends `connected` notification on connect
+   - Handles client subscription messages
+   - Filters notifications based on client subscriptions
+   - Graceful handling of client disconnection
+
+4. **Server Integration** (`server.rs`)
+   - Broadcasts attestation notifications from timestamp handlers
+   - Broadcasts anonymous attestation notifications
+   - Batch manager integration for batch_closed events
+   - Anchor manager integration for anchor_completed events
+
+5. **CLI Support** (`witness subscribe` command)
+   - `--types`: Comma-separated list of notification types to subscribe to
+   - `--output`: json or text format
+   - `--count`: Exit after receiving N notifications
+   - Connects via tokio-tungstenite WebSocket client
+
+**Example Usage:**
+```bash
+# Subscribe to all notifications (text output)
+witness subscribe
+
+# Subscribe to specific types
+witness subscribe --types attestation,batch_closed
+
+# JSON output for programmatic consumption
+witness subscribe --output json
+
+# Receive 5 notifications then exit
+witness subscribe --count 5
+```
+
+**Message Examples:**
+
+Attestation notification:
+```json
+{
+  "type": "attestation",
+  "timestamp": 1734567890,
+  "payload": {
+    "hash": "abc123...",
+    "sequence": 42,
+    "network_id": "witness-net",
+    "anonymous": false
+  }
+}
+```
+
+Batch closed notification:
+```json
+{
+  "type": "batch_closed",
+  "timestamp": 1734567950,
+  "payload": {
+    "batch_id": 7,
+    "merkle_root": "def456...",
+    "attestation_count": 15,
+    "period_start": 1734567000,
+    "period_end": 1734567950
+  }
+}
+```
+
+**Architecture:**
+- Uses tokio::sync::broadcast for efficient pub/sub
+- Each client gets independent subscription state
+- Notifications are JSON-serialized over WebSocket text frames
+- Graceful handling of slow consumers (lagged receivers)
 
 ## Testing Status
 

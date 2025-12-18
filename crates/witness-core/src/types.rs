@@ -347,3 +347,111 @@ pub struct ProofResponse {
     #[serde(default)]
     pub external_anchors: Vec<crate::ExternalAnchorProof>,
 }
+
+// ============================================================================
+// WebSocket Notification Types
+// ============================================================================
+
+/// Types of events that can be broadcast via WebSocket
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationType {
+    /// New attestation was created
+    Attestation,
+    /// Batch was closed
+    BatchClosed,
+    /// External anchor was completed
+    AnchorCompleted,
+    /// Connection established (sent on connect)
+    Connected,
+}
+
+/// WebSocket notification message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsNotification {
+    /// Type of notification
+    #[serde(rename = "type")]
+    pub notification_type: NotificationType,
+
+    /// Unix timestamp when the event occurred
+    pub timestamp: u64,
+
+    /// Notification payload (varies by type)
+    pub payload: WsPayload,
+}
+
+/// Payload for WebSocket notifications
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WsPayload {
+    /// Attestation notification payload
+    Attestation(AttestationPayload),
+    /// Batch closed notification payload
+    BatchClosed(BatchClosedPayload),
+    /// Anchor completed notification payload
+    AnchorCompleted(AnchorCompletedPayload),
+    /// Connected notification payload
+    Connected(ConnectedPayload),
+}
+
+/// Payload for new attestation notification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationPayload {
+    /// Hash that was timestamped (hex encoded)
+    pub hash: String,
+    /// Attestation sequence number
+    pub sequence: u64,
+    /// Network ID
+    pub network_id: String,
+    /// Whether this was an anonymous submission
+    #[serde(default)]
+    pub anonymous: bool,
+}
+
+/// Payload for batch closed notification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchClosedPayload {
+    /// Batch ID
+    pub batch_id: u64,
+    /// Merkle root (hex encoded)
+    pub merkle_root: String,
+    /// Number of attestations in the batch
+    pub attestation_count: u64,
+    /// Batch period start (Unix timestamp)
+    pub period_start: u64,
+    /// Batch period end (Unix timestamp)
+    pub period_end: u64,
+}
+
+/// Payload for anchor completed notification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnchorCompletedPayload {
+    /// Batch ID that was anchored
+    pub batch_id: u64,
+    /// Provider type (e.g., "internet_archive", "blockchain")
+    pub provider: String,
+    /// Anchor proof details
+    pub proof: serde_json::Value,
+}
+
+/// Payload for connection established notification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectedPayload {
+    /// Network ID
+    pub network_id: String,
+    /// Server version
+    pub version: String,
+    /// List of notification types the server will send
+    pub subscriptions: Vec<NotificationType>,
+}
+
+/// WebSocket subscription request from client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsSubscription {
+    /// Subscribe to these notification types (empty = all)
+    #[serde(default)]
+    pub subscribe: Vec<NotificationType>,
+    /// Unsubscribe from these notification types
+    #[serde(default)]
+    pub unsubscribe: Vec<NotificationType>,
+}
