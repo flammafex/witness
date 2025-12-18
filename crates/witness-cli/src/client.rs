@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
 use witness_core::{
-    ExternalAnchorProof, NetworkConfig, SignedAttestation, TimestampRequest, TimestampResponse,
-    VerifyRequest, VerifyResponse,
+    AnonymousTimestampRequest, AnonymousTimestampResponse, ExternalAnchorProof, NetworkConfig,
+    SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
 };
 
 pub struct WitnessClient {
@@ -157,5 +157,44 @@ impl WitnessClient {
             .context("Failed to parse gateway response")?;
 
         Ok(anchors)
+    }
+
+    /// Submit an anonymous timestamp using a Freebird token
+    pub async fn anonymous_timestamp(
+        &self,
+        hash: &str,
+        token_b64: &str,
+        exp: i64,
+        epoch: u32,
+    ) -> Result<AnonymousTimestampResponse> {
+        let url = format!("{}/v1/anonymous/timestamp", self.gateway_url);
+
+        let request = AnonymousTimestampRequest {
+            hash: hash.to_string(),
+            token_b64: token_b64.to_string(),
+            exp,
+            epoch,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to connect to gateway")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Gateway returned error {}: {}", status, error_text);
+        }
+
+        let anonymous_response: AnonymousTimestampResponse = response
+            .json()
+            .await
+            .context("Failed to parse gateway response")?;
+
+        Ok(anonymous_response)
     }
 }

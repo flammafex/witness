@@ -153,6 +153,29 @@ impl Storage {
         .execute(&self.pool)
         .await?;
 
+        // Phase 6: Anonymous submissions (Freebird integration)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS anonymous_submissions (
+                hash TEXT PRIMARY KEY,
+                freebird_verified_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (hash) REFERENCES attestations(hash)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_anonymous_submissions_verified
+            ON anonymous_submissions(freebird_verified_at DESC)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -816,6 +839,80 @@ impl Storage {
             "#,
         )
         .bind(provider)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let last_time: Option<i64> = row.get("last_time");
+        let total: i64 = row.get("total");
+
+        Ok((last_time.map(|t| t as u64), total as u64))
+    }
+
+    // ========== Phase 6: Anonymous Submissions (Freebird) ==========
+
+    /// Mark an attestation as anonymously submitted via Freebird
+    pub async fn mark_anonymous(&self, hash: &[u8; 32], freebird_verified_at: i64) -> Result<()> {
+        let hash_hex = hex::encode(hash);
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO anonymous_submissions (hash, freebird_verified_at, created_at)
+            VALUES (?1, ?2, ?3)
+            "#,
+        )
+        .bind(&hash_hex)
+        .bind(freebird_verified_at)
+        .bind(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Check if an attestation was submitted anonymously
+    pub async fn is_anonymous(&self, hash: &[u8; 32]) -> Result<bool> {
+        let hash_hex = hex::encode(hash);
+
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM anonymous_submissions
+            WHERE hash = ?1
+            "#,
+        )
+        .bind(&hash_hex)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count > 0)
+    }
+
+    /// Count total anonymous submissions
+    pub async fn count_anonymous_submissions(&self) -> Result<u64> {
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM anonymous_submissions"#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+
+    /// Get anonymous submission stats
+    pub async fn get_anonymous_stats(&self) -> Result<(Option<u64>, u64)> {
+        let row = sqlx::query(
+            r#"
+            SELECT MAX(freebird_verified_at) as last_time, COUNT(*) as total
+            FROM anonymous_submissions
+            "#,
+        )
         .fetch_one(&self.pool)
         .await?;
 

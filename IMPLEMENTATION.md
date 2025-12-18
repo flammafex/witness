@@ -302,11 +302,82 @@ pub enum AttestationSignatures {
 - [ ] Witness reputation
 - [x] Docker deployment (multi-stage Dockerfile with docker-compose)
 
-### ⏸️ Phase 6: Integrations
-- [ ] Freebird (anonymous submission)
+### ✅ Phase 6: Integrations (Freebird)
+- [x] Freebird (anonymous submission)
 - [ ] HyperToken (CRDT sync)
 - [ ] WebSocket notifications
 - [ ] Light client support
+
+#### Freebird Integration Details
+
+**What is Freebird?**
+Freebird is a privacy-preserving authorization system using VOPRF (Verifiable Oblivious Pseudorandom Function) cryptography. It enables anonymous, unlinkable token-based authentication without revealing user identity.
+
+**Integration Components:**
+
+1. **Configuration** (`FreebirdConfig` in `witness-core`)
+   - `enabled`: Enable/disable anonymous submissions
+   - `verifier_url`: URL of the Freebird verifier service
+   - `issuer_url`: URL for Freebird issuer metadata discovery
+   - `issuer_id`: Expected issuer identifier
+   - `max_clock_skew_secs`: Clock skew tolerance (default: 300s)
+   - `refresh_interval_min`: Metadata refresh interval (default: 10 min)
+
+2. **Freebird Client** (`freebird_client.rs` in `witness-gateway`)
+   - Fetches and caches issuer metadata from `.well-known/issuer`
+   - Verifies Freebird tokens via `/v1/verify` endpoint
+   - Handles token expiration and epoch validation
+   - Background metadata refresh task
+
+3. **Anonymous Submission API** (`POST /v1/anonymous/timestamp`)
+   - Accepts hash + Freebird token (base64url encoded)
+   - Verifies token with Freebird verifier first
+   - Creates timestamped attestation on success
+   - Records anonymous submission in database
+   - Returns attestation with `anonymous: true` flag
+
+4. **Database Schema**
+   - `anonymous_submissions` table tracks anonymous attestations
+   - Records Freebird verification timestamp
+   - No client-identifying information stored
+
+5. **CLI Support** (`witness anonymous` command)
+   - `--file` or `--hash`: Content to timestamp
+   - `--token`: Freebird VOPRF token (base64url)
+   - `--exp`: Token expiration timestamp
+   - `--epoch`: Token epoch for MAC key derivation
+   - `--output`: json or text format
+   - `--save`: Save attestation to file
+
+**Example Configuration:**
+```json
+{
+  "freebird": {
+    "enabled": true,
+    "verifier_url": "http://localhost:8082",
+    "issuer_url": "http://localhost:8081/.well-known/issuer",
+    "issuer_id": "issuer:freebird:v1",
+    "max_clock_skew_secs": 300,
+    "refresh_interval_min": 10
+  }
+}
+```
+
+**Example Anonymous Submission:**
+```bash
+# Using CLI
+witness anonymous --file secret.txt \
+  --token "base64url_token_here" \
+  --exp 1734567890 \
+  --epoch 42 \
+  --output text
+```
+
+**Privacy Guarantees:**
+- Freebird tokens are unlinkable (issuance and redemption cannot be correlated)
+- No user identity or tracking information stored
+- Only hash and verification timestamp recorded
+- IP addresses not logged for anonymous submissions
 
 ## Testing Status
 

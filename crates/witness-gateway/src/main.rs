@@ -3,6 +3,7 @@ mod anchor_manager;
 mod anchor_providers;
 mod batch_manager;
 mod federation_client;
+mod freebird_client;
 mod server;
 mod storage;
 mod witness_client;
@@ -18,6 +19,7 @@ use admin::AdminState;
 use anchor_manager::AnchorManager;
 use batch_manager::BatchManager;
 use federation_client::FederationClient;
+use freebird_client::FreebirdClient;
 use server::GatewayServer;
 use storage::Storage;
 
@@ -116,6 +118,23 @@ async fn main() -> Result<()> {
         storage.clone(),
     ));
 
+    // Initialize Freebird client (Phase 6)
+    let freebird_client = Arc::new(FreebirdClient::new(
+        Arc::new(network_config.freebird.clone()),
+    ));
+
+    // Check if Freebird is enabled
+    if network_config.freebird.enabled {
+        tracing::info!("Freebird anonymous submissions enabled");
+        tracing::info!("  Verifier URL: {}", network_config.freebird.verifier_url);
+        tracing::info!("  Issuer URL: {}", network_config.freebird.issuer_url);
+
+        // Start background metadata refresh
+        freebird_client.clone().start_metadata_refresh();
+    } else {
+        tracing::info!("Freebird anonymous submissions disabled");
+    }
+
     // Start batch manager background task
     batch_manager.clone().start();
 
@@ -133,6 +152,7 @@ async fn main() -> Result<()> {
         storage,
         batch_manager,
         federation_client,
+        freebird_client,
     );
     server.run(args.port, admin_state).await?;
 

@@ -4,7 +4,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{anchors, get, timestamp, verify};
+use commands::{anchors, anonymous, get, timestamp, verify};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -72,6 +72,37 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         output: String,
     },
+
+    /// Submit an anonymous timestamp using a Freebird token
+    Anonymous {
+        /// File path to timestamp (will compute SHA-256)
+        #[arg(short, long, conflicts_with = "hash")]
+        file: Option<String>,
+
+        /// Hash to timestamp (hex encoded SHA-256)
+        #[arg(long, conflicts_with = "file")]
+        hash: Option<String>,
+
+        /// Freebird VOPRF token (base64url encoded)
+        #[arg(short, long)]
+        token: String,
+
+        /// Token expiration timestamp (Unix seconds)
+        #[arg(short, long)]
+        exp: i64,
+
+        /// Token epoch (for MAC key derivation)
+        #[arg(long)]
+        epoch: u32,
+
+        /// Output format: json or text
+        #[arg(short, long, default_value = "text")]
+        output: String,
+
+        /// Save attestation to file
+        #[arg(short, long)]
+        save: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -95,6 +126,9 @@ async fn main() -> Result<()> {
         }
         Commands::Anchors { hash, output } => {
             anchors::run(&cli.gateway, &hash, &output).await?;
+        }
+        Commands::Anonymous { file, hash, token, exp, epoch, output, save } => {
+            anonymous::run(&cli.gateway, file, hash, token, exp, epoch, &output, save).await?;
         }
     }
 

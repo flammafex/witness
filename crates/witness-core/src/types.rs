@@ -152,9 +152,62 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub external_anchors: crate::external_anchors::ExternalAnchorsConfig,
 
+    /// Freebird anonymous submission configuration (Phase 6)
+    #[serde(default)]
+    pub freebird: FreebirdConfig,
+
     /// Deprecated: Use federation.peer_networks instead
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub federation_peers: Vec<String>,
+}
+
+/// Freebird anonymous submission configuration (Phase 6)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreebirdConfig {
+    /// Whether Freebird anonymous submissions are enabled
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// URL of the Freebird verifier service (e.g., "http://localhost:8082")
+    #[serde(default)]
+    pub verifier_url: String,
+
+    /// URL of the Freebird issuer for metadata discovery (e.g., "http://localhost:8081/.well-known/issuer")
+    #[serde(default)]
+    pub issuer_url: String,
+
+    /// Expected issuer ID for token validation
+    #[serde(default)]
+    pub issuer_id: String,
+
+    /// Maximum acceptable clock skew in seconds (default: 300 = 5 minutes)
+    #[serde(default = "default_clock_skew")]
+    pub max_clock_skew_secs: i64,
+
+    /// How often to refresh issuer metadata in minutes (default: 10)
+    #[serde(default = "default_refresh_interval")]
+    pub refresh_interval_min: u64,
+}
+
+fn default_clock_skew() -> i64 {
+    300
+}
+
+fn default_refresh_interval() -> u64 {
+    10
+}
+
+impl Default for FreebirdConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            verifier_url: String::new(),
+            issuer_url: String::new(),
+            issuer_id: String::new(),
+            max_clock_skew_secs: default_clock_skew(),
+            refresh_interval_min: default_refresh_interval(),
+        }
+    }
 }
 
 impl NetworkConfig {
@@ -219,4 +272,57 @@ pub struct SignRequest {
 pub struct SignResponse {
     pub witness_id: String,
     pub signature: Vec<u8>,
+}
+
+// ============================================================================
+// Phase 6: Freebird Anonymous Submission Types
+// ============================================================================
+
+/// Request for anonymous timestamping using Freebird token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnonymousTimestampRequest {
+    /// SHA-256 hash to timestamp (hex encoded)
+    pub hash: String,
+
+    /// Freebird VOPRF token (base64url encoded, 195 bytes)
+    pub token_b64: String,
+
+    /// Token expiration timestamp (Unix seconds)
+    pub exp: i64,
+
+    /// Epoch used for token MAC key derivation
+    pub epoch: u32,
+}
+
+/// Response from anonymous timestamp request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnonymousTimestampResponse {
+    /// The signed attestation
+    pub attestation: SignedAttestation,
+
+    /// Indicates this was an anonymous submission
+    pub anonymous: bool,
+
+    /// Freebird verification timestamp
+    pub freebird_verified_at: i64,
+}
+
+/// Freebird token verification request (sent to Freebird verifier)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreebirdVerifyRequest {
+    pub token_b64: String,
+    pub issuer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exp: Option<i64>,
+    pub epoch: u32,
+}
+
+/// Freebird token verification response (from Freebird verifier)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreebirdVerifyResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub verified_at: i64,
 }

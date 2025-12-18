@@ -8,14 +8,15 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use witness_core::{
-    Attestation, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof, NetworkConfig,
-    SignatureScheme, SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest,
-    VerifyResponse,
+    AnonymousTimestampRequest, AnonymousTimestampResponse, Attestation, CrossAnchorRequest,
+    CrossAnchorResponse, ExternalAnchorProof, NetworkConfig, SignatureScheme, SignedAttestation,
+    TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
 };
 
 use crate::admin::{admin_router, AdminState};
 use crate::batch_manager::BatchManager;
 use crate::federation_client::FederationClient;
+use crate::freebird_client::FreebirdClient;
 use crate::storage::Storage;
 use crate::witness_client::WitnessClient;
 
@@ -26,6 +27,7 @@ pub struct GatewayServer {
     witness_client: Arc<WitnessClient>,
     batch_manager: Arc<BatchManager>,
     federation_client: Arc<FederationClient>,
+    freebird_client: Arc<FreebirdClient>,
 }
 
 impl GatewayServer {
@@ -34,6 +36,7 @@ impl GatewayServer {
         storage: Arc<Storage>,
         batch_manager: Arc<BatchManager>,
         federation_client: Arc<FederationClient>,
+        freebird_client: Arc<FreebirdClient>,
     ) -> Self {
         Self {
             config,
@@ -41,6 +44,7 @@ impl GatewayServer {
             witness_client: Arc::new(WitnessClient::new()),
             batch_manager,
             federation_client,
+            freebird_client,
         }
     }
 
@@ -55,6 +59,8 @@ impl GatewayServer {
             .route("/v1/federation/anchor", post(federation_anchor_handler))
             // Phase 3: External anchor endpoints
             .route("/v1/anchors/:hash", get(get_anchors_handler))
+            // Phase 6: Freebird anonymous submission
+            .route("/v1/anonymous/timestamp", post(anonymous_timestamp_handler))
             .layer(CorsLayer::permissive())
             .with_state(self);
 
@@ -429,6 +435,205 @@ async fn get_anchors_handler(
     }
 }
 
+// Phase 6: Freebird anonymous submission handler
+async fn anonymous_timestamp_handler(
+    State(server): State<GatewayServer>,
+    Json(request): Json<AnonymousTimestampRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!(
+        "Received anonymous timestamp request for hash: {}",
+        request.hash
+    );
+
+    // Check if Freebird is enabled
+    if !server.freebird_client.is_enabled() {
+        tracing::warn!("Anonymous submission rejected: Freebird is not enabled");
+        return Err(AppError::FreebirdDisabled);
+    }
+
+    // Verify the Freebird token first
+    tracing::debug!(
+        "Verifying Freebird token: epoch={}, exp={}",
+        request.epoch,
+        request.exp
+    );
+
+    let verify_result = server
+        .freebird_client
+        .verify_token(&request.token_b64, request.exp, request.epoch)
+        .await
+        .map_err(|e| {
+            tracing::error!("Freebird verification error: {}", e);
+            AppError::FreebirdVerificationError(e.to_string())
+        })?;
+
+    if !verify_result.ok {
+        tracing::warn!(
+            "Freebird token verification failed: {:?}",
+            verify_result.error
+        );
+        return Err(AppError::FreebirdTokenInvalid(
+            verify_result.error.unwrap_or_else(|| "Unknown error".to_string()),
+        ));
+    }
+
+    tracing::info!(
+        "Freebird token verified at timestamp: {}",
+        verify_result.verified_at
+    );
+
+    // Parse hash
+    let hash_bytes = hex::decode(&request.hash).map_err(|_| AppError::InvalidHash)?;
+
+    let hash: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+
+    // Check for duplicate
+    if server.storage.check_duplicate(&hash).await? {
+        tracing::info!("Hash already timestamped (anonymous): {}", request.hash);
+
+        // Return existing attestation
+        let existing = server
+            .storage
+            .get_attestation(&hash)
+            .await?
+            .ok_or(AppError::InternalError)?;
+
+        return Ok(Json(AnonymousTimestampResponse {
+            attestation: existing,
+            anonymous: true,
+            freebird_verified_at: verify_result.verified_at,
+        }));
+    }
+
+    // Get next sequence number
+    let sequence = server.storage.get_next_sequence(&server.config.id).await?;
+
+    // Create attestation
+    let attestation = Attestation::new(hash, server.config.id.clone(), sequence);
+
+    tracing::debug!("Created anonymous attestation: {}", attestation);
+
+    // Request signatures from all witnesses concurrently
+    let mut tasks = Vec::new();
+
+    for witness in &server.config.witnesses {
+        let witness = witness.clone();
+        let attestation = attestation.clone();
+        let client = server.witness_client.clone();
+
+        let task = tokio::spawn(async move {
+            match client.request_signature(&witness, &attestation).await {
+                Ok(response) => {
+                    tracing::info!("Got signature from witness: {}", witness.id);
+                    Some(response)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get signature from {}: {}", witness.id, e);
+                    None
+                }
+            }
+        });
+
+        tasks.push(task);
+    }
+
+    // Collect results and create signed attestation based on signature scheme
+    let signed = match server.config.signature_scheme {
+        SignatureScheme::Ed25519 => {
+            // Ed25519: Collect individual signatures
+            let mut signed = SignedAttestation::new(attestation.clone());
+
+            for task in tasks {
+                if let Ok(Some(response)) = task.await {
+                    signed.add_signature(response.witness_id, response.signature);
+                }
+            }
+
+            tracing::info!(
+                "Collected {} Ed25519 signatures for anonymous submission (threshold: {})",
+                signed.signature_count(),
+                server.config.threshold
+            );
+
+            if signed.signature_count() < server.config.threshold {
+                return Err(AppError::InsufficientSignatures {
+                    got: signed.signature_count(),
+                    required: server.config.threshold,
+                });
+            }
+
+            signed
+        }
+
+        SignatureScheme::BLS => {
+            // BLS: Collect individual signatures and aggregate
+            let mut individual_signatures = Vec::new();
+            let mut signer_ids = Vec::new();
+
+            for task in tasks {
+                if let Ok(Some(response)) = task.await {
+                    individual_signatures.push(response.signature);
+                    signer_ids.push(response.witness_id);
+                }
+            }
+
+            tracing::info!(
+                "Collected {} BLS signatures to aggregate for anonymous submission (threshold: {})",
+                individual_signatures.len(),
+                server.config.threshold
+            );
+
+            if individual_signatures.len() < server.config.threshold {
+                return Err(AppError::InsufficientSignatures {
+                    got: individual_signatures.len(),
+                    required: server.config.threshold,
+                });
+            }
+
+            // Aggregate BLS signatures
+            let aggregated_signature =
+                witness_core::aggregate_signatures_bls(&individual_signatures).map_err(|e| {
+                    tracing::error!("BLS aggregation failed: {}", e);
+                    AppError::InvalidSignature
+                })?;
+
+            tracing::info!(
+                "Aggregated {} BLS signatures into single signature",
+                individual_signatures.len()
+            );
+
+            SignedAttestation::new_with_aggregated(attestation.clone(), aggregated_signature, signer_ids)
+        }
+    };
+
+    // Verify signatures
+    let verified_count = witness_core::verify_signed_attestation(&signed, &server.config).map_err(|e| {
+        tracing::error!("Signature verification failed: {}", e);
+        AppError::InvalidSignature
+    })?;
+
+    tracing::info!("Verified {} signatures for anonymous submission", verified_count);
+
+    // Store attestation (marked as anonymous)
+    server.storage.store_attestation(&signed).await?;
+    server
+        .storage
+        .mark_anonymous(&hash, verify_result.verified_at)
+        .await?;
+
+    tracing::info!(
+        "Successfully timestamped hash {} anonymously with sequence {}",
+        request.hash,
+        signed.attestation.sequence
+    );
+
+    Ok(Json(AnonymousTimestampResponse {
+        attestation: signed,
+        anonymous: true,
+        freebird_verified_at: verify_result.verified_at,
+    }))
+}
+
 // Error handling
 enum AppError {
     InvalidHash,
@@ -436,6 +641,9 @@ enum AppError {
     InvalidSignature,
     InsufficientSignatures { got: usize, required: usize },
     InternalError,
+    FreebirdDisabled,
+    FreebirdVerificationError(String),
+    FreebirdTokenInvalid(String),
     DatabaseError(sqlx::Error),
     Other(anyhow::Error),
 }
@@ -463,6 +671,18 @@ impl IntoResponse for AppError {
                 format!("Insufficient signatures: got {}, required {}", got, required),
             ),
             AppError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()),
+            AppError::FreebirdDisabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Anonymous submissions are not enabled".to_string(),
+            ),
+            AppError::FreebirdVerificationError(msg) => (
+                StatusCode::BAD_GATEWAY,
+                format!("Freebird verification service error: {}", msg),
+            ),
+            AppError::FreebirdTokenInvalid(msg) => (
+                StatusCode::UNAUTHORIZED,
+                format!("Invalid Freebird token: {}", msg),
+            ),
             AppError::DatabaseError(e) => {
                 tracing::error!("Database error: {}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
