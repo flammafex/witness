@@ -299,12 +299,10 @@ pub enum AttestationSignatures {
 - [ ] Prometheus metrics
 - [ ] Rate limiting
 - [ ] Admin API
-- [ ] Witness reputation
 - [x] Docker deployment (multi-stage Dockerfile with docker-compose)
 
 ### ✅ Phase 6: Integrations (Freebird)
 - [x] Freebird (anonymous submission)
-- [ ] HyperToken (CRDT sync)
 - [ ] WebSocket notifications
 - [ ] Light client support
 
