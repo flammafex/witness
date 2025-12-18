@@ -18,6 +18,7 @@ Witness is a federated witness network that provides threshold-signed timestamps
 - **BLS Signature Aggregation:** Optional BLS12-381 signatures provide 50% bandwidth savings.
 - **Federated Architecture:** Multiple independent networks can cross-anchor for additional security.
 - **Privacy-Preserving:** Only hashes are submitted, not content.
+- **Anonymous Submissions:** Optional Freebird integration enables unlinkable, anonymous timestamping.
 - **Simple Integration:** Easy-to-use CLI and REST API.
 
 ## CAN I GET A
@@ -99,6 +100,11 @@ cd witness
 Timestamp a file:
 ```bash
 cargo run -p witness-cli -- timestamp --file README.md --save attestation.json
+```
+
+Anonymous timestamp (with Freebird token):
+```bash
+cargo run -p witness-cli -- anonymous --file README.md --token <freebird_token> --exp <expiration> --epoch <epoch>
 ```
 
 ## ☁️ Production Deployment
@@ -184,6 +190,48 @@ Add to your `network.json`:
 }
 ```
 
+### Anonymous Submissions (Freebird Integration)
+
+For applications requiring unlinkable, anonymous timestamping, Witness integrates with [Freebird](https://github.com/flammafex/freebird)—a privacy-preserving authorization system using VOPRF (Verifiable Oblivious Pseudorandom Function) cryptography.
+
+**How it works:**
+1. User obtains a Freebird token from an issuer (token issuance is unlinkable to redemption)
+2. User submits hash + token to Witness via `/v1/anonymous/timestamp`
+3. Witness verifies the token with the Freebird verifier
+4. Witness creates the timestamped attestation with no client-identifying information
+
+**Privacy Guarantees:**
+- Freebird tokens are cryptographically unlinkable (issuance cannot be correlated to redemption)
+- No user identity or IP addresses stored for anonymous submissions
+- Only the hash and verification timestamp are recorded
+
+#### Configuration
+
+Add to your `network.json`:
+
+```json
+{
+  "freebird": {
+    "enabled": true,
+    "verifier_url": "http://localhost:8082",
+    "issuer_url": "http://localhost:8081/.well-known/issuer",
+    "issuer_id": "issuer:freebird:v1",
+    "max_clock_skew_secs": 300,
+    "refresh_interval_min": 10
+  }
+}
+```
+
+#### CLI Usage
+
+```bash
+witness anonymous --file document.pdf \
+  --token "base64url_freebird_token" \
+  --exp 1734567890 \
+  --epoch 42 \
+  --output text
+```
+
 ## FAQ
 
 **Q: What does "Post-Blockchain" mean?**
@@ -194,6 +242,9 @@ A: For the user, yes. There are no gas fees. For the Gateway operator, enabling 
 
 **Q: Can witnesses see my data?**
 A: No, you only submit SHA-256 hashes, not the content itself.
+
+**Q: How does anonymous submission differ from regular submission?**
+A: Regular submissions are already privacy-preserving (only hashes, no user accounts). Anonymous submissions add an additional layer: with Freebird tokens, even the gateway operator cannot correlate your submissions over time. The token proves you're authorized without revealing who you are.
 
 ## License
 
