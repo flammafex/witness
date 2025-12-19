@@ -1,9 +1,19 @@
 use anyhow::Result;
+use serde::Serialize;
 use sqlx::{sqlite::SqlitePool, Row};
 use witness_core::{
     signature_scheme::AttestationSignatures, Attestation, AttestationBatch, CrossAnchor,
     ExternalAnchorProof, SignedAttestation, WitnessSignature,
 };
+
+/// Throughput metrics for the admin dashboard
+#[derive(Serialize, Default)]
+pub struct ThroughputMetrics {
+    pub attestations_per_minute: f64,
+    pub attestations_last_hour: u64,
+    pub attestations_last_24h: u64,
+    pub peak_rate_last_hour: f64,
+}
 
 pub struct Storage {
     pool: SqlitePool,
@@ -823,5 +833,339 @@ impl Storage {
         let total: i64 = row.get("total");
 
         Ok((last_time.map(|t| t as u64), total as u64))
+    }
+
+    // ========== Admin Dashboard - New Methods ==========
+
+    /// Get attestation by hash prefix (minimum 8 characters)
+    pub async fn get_attestation_by_prefix(
+        &self,
+        hash_prefix: &str,
+    ) -> Result<Option<(SignedAttestation, Option<i64>)>> {
+        let row = sqlx::query(
+            r#"
+            SELECT hash, timestamp, network_id, sequence, batch_id
+            FROM attestations
+            WHERE hash LIKE ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(format!("{}%", hash_prefix))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let hash_str: String = row.get("hash");
+        let hash_bytes = hex::decode(&hash_str)?;
+        let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+        let batch_id: Option<i64> = row.get("batch_id");
+
+        let attestation = Attestation {
+            hash: hash_array,
+            timestamp: row.get::<i64, _>("timestamp") as u64,
+            network_id: row.get("network_id"),
+            sequence: row.get::<i64, _>("sequence") as u64,
+        };
+
+        // Get signatures
+        let sig_rows = sqlx::query(
+            r#"
+            SELECT witness_id, signature
+            FROM signatures
+            WHERE hash = ?1
+            "#,
+        )
+        .bind(&hash_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let signatures = if !sig_rows.is_empty() {
+            let first_witness_id: String = sig_rows[0].get("witness_id");
+
+            if first_witness_id.starts_with("BLS_AGGREGATED:") {
+                let signature: Vec<u8> = sig_rows[0].get("signature");
+                let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
+                let signers: Vec<String> =
+                    signers_str.split(',').map(|s| s.to_string()).collect();
+
+                AttestationSignatures::Aggregated { signature, signers }
+            } else {
+                let witness_sigs: Vec<WitnessSignature> = sig_rows
+                    .iter()
+                    .map(|row| WitnessSignature {
+                        witness_id: row.get("witness_id"),
+                        signature: row.get("signature"),
+                    })
+                    .collect();
+
+                AttestationSignatures::MultiSig {
+                    signatures: witness_sigs,
+                }
+            }
+        } else {
+            AttestationSignatures::MultiSig {
+                signatures: Vec::new(),
+            }
+        };
+
+        Ok(Some((
+            SignedAttestation {
+                attestation,
+                signatures,
+            },
+            batch_id,
+        )))
+    }
+
+    /// Get attestations with pagination and optional hash prefix search
+    pub async fn get_attestations_paginated(
+        &self,
+        page: u64,
+        limit: u64,
+        hash_prefix: Option<&str>,
+    ) -> Result<(Vec<(SignedAttestation, Option<i64>)>, u64)> {
+        let offset = (page - 1) * limit;
+
+        // Get total count
+        let count_row = if let Some(prefix) = hash_prefix {
+            sqlx::query(
+                r#"SELECT COUNT(*) as count FROM attestations WHERE hash LIKE ?1"#,
+            )
+            .bind(format!("{}%", prefix))
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            sqlx::query(r#"SELECT COUNT(*) as count FROM attestations"#)
+                .fetch_one(&self.pool)
+                .await?
+        };
+        let total: i64 = count_row.get("count");
+
+        // Get paginated results
+        let rows = if let Some(prefix) = hash_prefix {
+            sqlx::query(
+                r#"
+                SELECT hash, timestamp, network_id, sequence, batch_id
+                FROM attestations
+                WHERE hash LIKE ?1
+                ORDER BY timestamp DESC, sequence DESC
+                LIMIT ?2 OFFSET ?3
+                "#,
+            )
+            .bind(format!("{}%", prefix))
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT hash, timestamp, network_id, sequence, batch_id
+                FROM attestations
+                ORDER BY timestamp DESC, sequence DESC
+                LIMIT ?1 OFFSET ?2
+                "#,
+            )
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let mut attestations = Vec::new();
+
+        for row in rows {
+            let hash_str: String = row.get("hash");
+            let hash_bytes = hex::decode(&hash_str)?;
+            let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+            let batch_id: Option<i64> = row.get("batch_id");
+
+            let attestation = Attestation {
+                hash: hash_array,
+                timestamp: row.get::<i64, _>("timestamp") as u64,
+                network_id: row.get("network_id"),
+                sequence: row.get::<i64, _>("sequence") as u64,
+            };
+
+            // Get signatures
+            let sig_rows = sqlx::query(
+                r#"
+                SELECT witness_id, signature
+                FROM signatures
+                WHERE hash = ?1
+                "#,
+            )
+            .bind(&hash_str)
+            .fetch_all(&self.pool)
+            .await?;
+
+            let signatures = if !sig_rows.is_empty() {
+                let first_witness_id: String = sig_rows[0].get("witness_id");
+
+                if first_witness_id.starts_with("BLS_AGGREGATED:") {
+                    let signature: Vec<u8> = sig_rows[0].get("signature");
+                    let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
+                    let signers: Vec<String> =
+                        signers_str.split(',').map(|s| s.to_string()).collect();
+
+                    AttestationSignatures::Aggregated { signature, signers }
+                } else {
+                    let witness_sigs: Vec<WitnessSignature> = sig_rows
+                        .iter()
+                        .map(|row| WitnessSignature {
+                            witness_id: row.get("witness_id"),
+                            signature: row.get("signature"),
+                        })
+                        .collect();
+
+                    AttestationSignatures::MultiSig {
+                        signatures: witness_sigs,
+                    }
+                }
+            } else {
+                AttestationSignatures::MultiSig {
+                    signatures: Vec::new(),
+                }
+            };
+
+            attestations.push((
+                SignedAttestation {
+                    attestation,
+                    signatures,
+                },
+                batch_id,
+            ));
+        }
+
+        Ok((attestations, total as u64))
+    }
+
+    /// Get batches with pagination
+    pub async fn get_batches_paginated(
+        &self,
+        page: u64,
+        limit: u64,
+    ) -> Result<(Vec<(AttestationBatch, bool)>, u64)> {
+        let offset = (page - 1) * limit;
+
+        // Get total count
+        let count_row = sqlx::query(r#"SELECT COUNT(*) as count FROM batches"#)
+            .fetch_one(&self.pool)
+            .await?;
+        let total: i64 = count_row.get("count");
+
+        // Get paginated results with anchor status
+        let rows = sqlx::query(
+            r#"
+            SELECT b.id, b.network_id, b.merkle_root, b.period_start, b.period_end, b.attestation_count,
+                   (SELECT COUNT(*) FROM external_anchor_proofs WHERE batch_id = b.id) as anchor_count
+            FROM batches b
+            ORDER BY b.id DESC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let batches: Vec<(AttestationBatch, bool)> = rows
+            .into_iter()
+            .map(|row| {
+                let merkle_root_vec: Vec<u8> = row.get("merkle_root");
+                let merkle_root: [u8; 32] = merkle_root_vec.try_into().unwrap();
+                let anchor_count: i64 = row.get("anchor_count");
+
+                (
+                    AttestationBatch {
+                        id: row.get::<i64, _>("id") as u64,
+                        network_id: row.get("network_id"),
+                        merkle_root,
+                        period_start: row.get::<i64, _>("period_start") as u64,
+                        period_end: row.get::<i64, _>("period_end") as u64,
+                        attestation_count: row.get::<i64, _>("attestation_count") as u64,
+                    },
+                    anchor_count > 0,
+                )
+            })
+            .collect();
+
+        Ok((batches, total as u64))
+    }
+
+    /// Get throughput metrics
+    pub async fn get_throughput_metrics(&self) -> Result<ThroughputMetrics> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let one_minute_ago = now - 60;
+        let one_hour_ago = now - 3600;
+        let one_day_ago = now - 86400;
+
+        // Get attestations in the last minute
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#,
+        )
+        .bind(one_minute_ago as i64)
+        .fetch_one(&self.pool)
+        .await?;
+        let last_minute: i64 = row.get("count");
+
+        // Get attestations in the last hour
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#,
+        )
+        .bind(one_hour_ago as i64)
+        .fetch_one(&self.pool)
+        .await?;
+        let last_hour: i64 = row.get("count");
+
+        // Get attestations in the last 24 hours
+        let row = sqlx::query(
+            r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#,
+        )
+        .bind(one_day_ago as i64)
+        .fetch_one(&self.pool)
+        .await?;
+        let last_24h: i64 = row.get("count");
+
+        // Calculate peak rate in the last hour (attestations per minute, max across 5-minute windows)
+        let peak_rate = if last_hour > 0 {
+            // Get counts per 5-minute window in the last hour
+            let rows = sqlx::query(
+                r#"
+                SELECT (timestamp / 300) as window, COUNT(*) as count
+                FROM attestations
+                WHERE timestamp >= ?1
+                GROUP BY window
+                ORDER BY count DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(one_hour_ago as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+            if let Some(row) = rows.first() {
+                let max_in_window: i64 = row.get("count");
+                (max_in_window as f64) / 5.0 // Convert 5-minute count to per-minute rate
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        Ok(ThroughputMetrics {
+            attestations_per_minute: last_minute as f64,
+            attestations_last_hour: last_hour as u64,
+            attestations_last_24h: last_24h as u64,
+            peak_rate_last_hour: peak_rate,
+        })
     }
 }
