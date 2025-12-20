@@ -55,6 +55,7 @@ impl WitnessClient {
         Ok(sign_response)
     }
 
+    #[allow(dead_code)] // Reserved for witness health monitoring feature
     pub async fn health_check(&self, witness: &WitnessInfo) -> bool {
         let url = format!("{}/health", witness.endpoint);
 

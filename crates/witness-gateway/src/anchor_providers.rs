@@ -17,6 +17,7 @@ pub trait AnchorProvider: Send + Sync {
     fn provider_type(&self) -> AnchorProviderType;
 
     /// Verify an anchor proof
+    #[allow(dead_code)] // Reserved for anchor verification feature
     async fn verify(&self, proof: &ExternalAnchorProof) -> Result<bool>;
 }
 
@@ -34,6 +35,7 @@ impl InternetArchiveProvider {
         }
     }
 
+    #[allow(dead_code)] // Reserved for custom archive URL configuration
     pub fn with_url(base_url: String) -> Self {
         Self {
             client: Client::new(),
@@ -194,11 +196,13 @@ impl AnchorProvider for InternetArchiveProvider {
 
 /// Ethereum/EVM anchor provider
 /// Anchors batch roots by sending a 0-value transaction with the root in input data.
+#[allow(dead_code)] // TODO: Wire up blockchain provider in anchor_manager.rs
 pub struct EthereumProvider {
     client: SignerMiddleware<Provider<Http>, LocalWallet>,
 }
 
 impl EthereumProvider {
+    #[allow(dead_code)] // TODO: Wire up blockchain provider in anchor_manager.rs
     pub async fn new(rpc_url: &str, private_key: &str) -> Result<Self> {
         let provider = Provider::<Http>::try_from(rpc_url)?;
         let chain_id = provider.get_chainid().await?;

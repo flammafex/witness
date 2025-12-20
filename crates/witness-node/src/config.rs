@@ -104,12 +104,4 @@ impl WitnessNodeConfig {
         }
     }
 
-    // Legacy method for backward compatibility
-    pub fn signing_key(&self) -> Result<SigningKey> {
-        self.ed25519_signing_key()
-    }
-
-    pub fn verifying_key(&self) -> Result<VerifyingKey> {
-        self.ed25519_verifying_key()
-    }
 }

@@ -134,6 +134,7 @@ impl BatchManager {
     }
 
     /// Manually trigger a batch close (for testing)
+    #[allow(dead_code)] // Reserved for testing and manual batch triggers
     pub async fn trigger_batch_close(&self) -> anyhow::Result<Option<AttestationBatch>> {
         self.close_batch().await
     }

@@ -483,6 +483,7 @@ impl Storage {
     }
 
     /// Get a batch by ID
+    #[allow(dead_code)] // Used by get_cross_anchors and reserved for batch lookup feature
     pub async fn get_batch(&self, batch_id: i64) -> Result<Option<AttestationBatch>> {
         let row = sqlx::query(
             r#"
@@ -529,6 +530,7 @@ impl Storage {
     }
 
     /// Store a cross-anchor
+    #[allow(dead_code)] // Reserved for cross-network federation feature
     pub async fn store_cross_anchor(&self, cross_anchor: &CrossAnchor) -> Result<()> {
         // Insert cross-anchor
         let result = sqlx::query(
@@ -570,6 +572,7 @@ impl Storage {
     }
 
     /// Get cross-anchors for a batch
+    #[allow(dead_code)] // Reserved for cross-network federation feature
     pub async fn get_cross_anchors(&self, batch_id: i64) -> Result<Vec<CrossAnchor>> {
         let rows = sqlx::query(
             r#"

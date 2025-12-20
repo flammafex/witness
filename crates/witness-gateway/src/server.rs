@@ -24,7 +24,9 @@ pub struct GatewayServer {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
     witness_client: Arc<WitnessClient>,
+    #[allow(dead_code)] // Reserved for future federation features
     batch_manager: Arc<BatchManager>,
+    #[allow(dead_code)] // Reserved for future federation features
     federation_client: Arc<FederationClient>,
 }
 
@@ -400,7 +402,7 @@ async fn get_anchors_handler(
         .map_err(|_| AppError::InvalidHash)?;
 
     // First, check if the attestation exists
-    let attestation = server
+    let _attestation = server
         .storage
         .get_attestation(&hash_array)
         .await?

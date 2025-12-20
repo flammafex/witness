@@ -202,6 +202,7 @@ impl AnchorManager {
     }
 
     /// Verify all anchor proofs for a batch
+    #[allow(dead_code)] // Reserved for anchor verification feature
     pub async fn verify_batch_anchors(&self, batch_id: u64) -> Result<Vec<bool>> {
         let proofs = self.storage.get_anchor_proofs(batch_id).await?;
         let mut results = Vec::new();
