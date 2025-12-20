@@ -3,21 +3,26 @@
 //! Provides a read-only web dashboard for monitoring network health,
 //! attestation statistics, witness status, and external anchors.
 //!
-//! Static files are served from the `static/admin/` directory.
+//! Static files are embedded in the binary for easy deployment.
 
 use axum::{
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tower_http::services::ServeDir;
 
 use crate::storage::Storage;
 use witness_core::NetworkConfig;
+
+// Embed static files at compile time
+const INDEX_HTML: &str = include_str!("../static/admin/index.html");
+const STYLES_CSS: &str = include_str!("../static/admin/styles.css");
+const APP_JS: &str = include_str!("../static/admin/app.js");
 
 /// Shared state for admin endpoints
 #[derive(Clone)]
@@ -39,12 +44,12 @@ impl AdminState {
 
 /// Create admin router with all dashboard routes
 pub fn admin_router(state: AdminState) -> Router {
-    // Get the path to static files relative to the crate
-    let static_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("static")
-        .join("admin");
-
     Router::new()
+        // Static file routes (embedded in binary)
+        .route("/", get(serve_index))
+        .route("/index.html", get(serve_index))
+        .route("/styles.css", get(serve_styles))
+        .route("/app.js", get(serve_app_js))
         // API routes
         .route("/api/stats", get(stats_handler))
         .route("/api/witnesses", get(witnesses_handler))
@@ -55,8 +60,30 @@ pub fn admin_router(state: AdminState) -> Router {
         .route("/api/attestations", get(attestations_handler))
         .route("/api/batches", get(batches_handler))
         .with_state(state)
-        // Serve static files - this must come after API routes
-        .nest_service("/", ServeDir::new(static_path).append_index_html_on_directories(true))
+}
+
+// ============================================================================
+// Static File Handlers (embedded)
+// ============================================================================
+
+async fn serve_index() -> Html<&'static str> {
+    Html(INDEX_HTML)
+}
+
+async fn serve_styles() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/css")
+        .body(STYLES_CSS.into())
+        .unwrap()
+}
+
+async fn serve_app_js() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/javascript")
+        .body(APP_JS.into())
+        .unwrap()
 }
 
 // ============================================================================
