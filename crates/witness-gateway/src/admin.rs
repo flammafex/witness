@@ -2,16 +2,19 @@
 //!
 //! Provides a read-only web dashboard for monitoring network health,
 //! attestation statistics, witness status, and external anchors.
+//!
+//! Static files are served from the `static/admin/` directory.
 
 use axum::{
-    extract::State,
-    response::{Html, IntoResponse},
+    extract::{Path, Query, State},
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tower_http::services::ServeDir;
 
 use crate::storage::Storage;
 use witness_core::NetworkConfig;
@@ -36,17 +39,28 @@ impl AdminState {
 
 /// Create admin router with all dashboard routes
 pub fn admin_router(state: AdminState) -> Router {
+    // Get the path to static files relative to the crate
+    let static_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("static")
+        .join("admin");
+
     Router::new()
-        .route("/", get(dashboard_page))
+        // API routes
         .route("/api/stats", get(stats_handler))
         .route("/api/witnesses", get(witnesses_handler))
         .route("/api/recent", get(recent_handler))
         .route("/api/anchors", get(anchors_handler))
+        .route("/api/metrics", get(metrics_handler))
+        .route("/api/attestation/:hash", get(attestation_handler))
+        .route("/api/attestations", get(attestations_handler))
+        .route("/api/batches", get(batches_handler))
         .with_state(state)
+        // Serve static files - this must come after API routes
+        .nest_service("/", ServeDir::new(static_path).append_index_html_on_directories(true))
 }
 
 // ============================================================================
-// API Handlers
+// API Handlers - Existing Endpoints
 // ============================================================================
 
 #[derive(Serialize)]
@@ -213,334 +227,234 @@ async fn anchors_handler(State(state): State<AdminState>) -> impl IntoResponse {
 }
 
 // ============================================================================
-// Dashboard HTML Page
+// API Handlers - New Endpoints
 // ============================================================================
 
-async fn dashboard_page(State(state): State<AdminState>) -> impl IntoResponse {
-    Html(generate_dashboard_html(&state.config))
+async fn metrics_handler(State(state): State<AdminState>) -> impl IntoResponse {
+    let metrics = state
+        .storage
+        .get_throughput_metrics()
+        .await
+        .unwrap_or_default();
+
+    Json(metrics)
 }
 
-fn generate_dashboard_html(config: &NetworkConfig) -> String {
-    format!(
-        r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Witness Dashboard - {network_id}</title>
-    <style>
-        :root {{
-            --bg: #0a0a0a;
-            --card-bg: #141414;
-            --border: #2a2a2a;
-            --text: #e0e0e0;
-            --text-dim: #888;
-            --accent: #4a9eff;
-            --success: #4ade80;
-            --warning: #fbbf24;
-            --error: #f87171;
-        }}
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.6;
-            padding: 1rem;
-        }}
-        .container {{ max-width: 1200px; margin: 0 auto; }}
-        header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 1rem 0;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 1.5rem;
-        }}
-        h1 {{ font-size: 1.25rem; font-weight: 600; }}
-        h1 span {{ color: var(--accent); }}
-        .meta {{ color: var(--text-dim); font-size: 0.875rem; }}
-        .grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }}
-        .card {{
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-        }}
-        .card-title {{
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            color: var(--text-dim);
-            margin-bottom: 0.5rem;
-            letter-spacing: 0.05em;
-        }}
-        .stat {{
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--accent);
-        }}
-        .stat-small {{ font-size: 1rem; color: var(--text); }}
-        .witnesses {{ display: flex; flex-wrap: wrap; gap: 0.5rem; }}
-        .witness {{
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 0.75rem;
-            background: var(--bg);
-            border-radius: 6px;
-            font-size: 0.875rem;
-        }}
-        .dot {{
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }}
-        .dot.online {{ background: var(--success); }}
-        .dot.offline {{ background: var(--error); }}
-        .dot.loading {{ background: var(--warning); animation: pulse 1s infinite; }}
-        @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
-        .latency {{ color: var(--text-dim); font-size: 0.75rem; }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.875rem;
-        }}
-        th, td {{
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }}
-        th {{
-            color: var(--text-dim);
-            font-weight: 500;
-            text-transform: uppercase;
-            font-size: 0.7rem;
-            letter-spacing: 0.05em;
-        }}
-        .hash {{
-            font-family: inherit;
-            color: var(--accent);
-        }}
-        .time-ago {{ color: var(--text-dim); }}
-        .badge {{
-            display: inline-block;
-            padding: 0.125rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }}
-        .badge.success {{ background: rgba(74, 222, 128, 0.1); color: var(--success); }}
-        .badge.warning {{ background: rgba(251, 191, 36, 0.1); color: var(--warning); }}
-        .badge.error {{ background: rgba(248, 113, 113, 0.1); color: var(--error); }}
-        .section-title {{
-            font-size: 0.875rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid var(--border);
-        }}
-        .anchor-grid {{ display: flex; flex-wrap: wrap; gap: 0.75rem; }}
-        .anchor {{
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 0.75rem;
-            background: var(--bg);
-            border-radius: 6px;
-            font-size: 0.8rem;
-        }}
-        .anchor .name {{ font-weight: 500; }}
-        .anchor .info {{ color: var(--text-dim); font-size: 0.7rem; }}
-        footer {{
-            margin-top: 2rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
-            text-align: center;
-            color: var(--text-dim);
-            font-size: 0.75rem;
-        }}
-        footer a {{ color: var(--accent); text-decoration: none; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1><span>Witness</span> Dashboard</h1>
-            <div class="meta">
-                Network: <strong>{network_id}</strong> |
-                Scheme: <strong>{signature_scheme}</strong> |
-                Threshold: <strong>{threshold}/{witness_count}</strong>
-            </div>
-        </header>
+#[derive(Serialize)]
+struct AttestationDetail {
+    hash: String,
+    timestamp: u64,
+    timestamp_human: String,
+    network_id: String,
+    sequence: u64,
+    signatures: Vec<SignatureInfo>,
+    batch_id: Option<u64>,
+    anchor_proofs: Vec<AnchorProofInfo>,
+}
 
-        <div class="grid">
-            <div class="card">
-                <div class="card-title">Total Attestations</div>
-                <div class="stat" id="total-attestations">-</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Last 24 Hours</div>
-                <div class="stat" id="attestations-24h">-</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Batches</div>
-                <div class="stat" id="total-batches">-</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Uptime</div>
-                <div class="stat stat-small" id="uptime">-</div>
-            </div>
-        </div>
+#[derive(Serialize)]
+struct SignatureInfo {
+    witness_id: String,
+    signature: String,
+}
 
-        <div class="card" style="margin-bottom: 1.5rem;">
-            <div class="section-title">Witnesses</div>
-            <div class="witnesses" id="witnesses">
-                <div class="witness"><span class="dot loading"></span> Loading...</div>
-            </div>
-        </div>
+#[derive(Serialize)]
+struct AnchorProofInfo {
+    provider: String,
+    timestamp: u64,
+    proof: serde_json::Value,
+}
 
-        <div class="card" style="margin-bottom: 1.5rem;">
-            <div class="section-title">External Anchors</div>
-            <div class="anchor-grid" id="anchors">
-                <div class="anchor">Loading...</div>
-            </div>
-        </div>
+async fn attestation_handler(
+    State(state): State<AdminState>,
+    Path(hash): Path<String>,
+) -> impl IntoResponse {
+    // Parse hash - support full hash or prefix (min 8 chars)
+    if hash.len() < 8 {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Hash must be at least 8 characters",
+        ));
+    }
 
-        <div class="card">
-            <div class="section-title">Recent Attestations</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Hash</th>
-                        <th>Sequence</th>
-                        <th>Signatures</th>
-                        <th>Time</th>
-                    </tr>
-                </thead>
-                <tbody id="recent">
-                    <tr><td colspan="4" style="text-align: center; color: var(--text-dim);">Loading...</td></tr>
-                </tbody>
-            </table>
-        </div>
+    let result = state
+        .storage
+        .get_attestation_by_prefix(&hash)
+        .await
+        .map_err(|_| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
 
-        <footer>
-            <a href="https://github.com/flammafex/witness">Witness</a> -
-            Post-Blockchain Timestamping
-        </footer>
-    </div>
+    let Some((attestation, batch_id)) = result else {
+        return Err((axum::http::StatusCode::NOT_FOUND, "Attestation not found"));
+    };
 
-    <script>
-        async function fetchJson(url) {{
-            const resp = await fetch(url);
-            return resp.json();
-        }}
+    // Get anchor proofs if batched
+    let anchor_proofs = if let Some(bid) = batch_id {
+        state
+            .storage
+            .get_anchor_proofs(bid as u64)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| AnchorProofInfo {
+                provider: format!("{}", p.provider),
+                timestamp: p.timestamp,
+                proof: p.proof,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-        function formatUptime(seconds) {{
-            const d = Math.floor(seconds / 86400);
-            const h = Math.floor((seconds % 86400) / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            if (d > 0) return `${{d}}d ${{h}}h ${{m}}m`;
-            if (h > 0) return `${{h}}h ${{m}}m`;
-            return `${{m}}m`;
-        }}
+    // Extract signatures
+    let signatures: Vec<SignatureInfo> = match &attestation.signatures {
+        witness_core::signature_scheme::AttestationSignatures::MultiSig { signatures } => {
+            signatures
+                .iter()
+                .map(|s| SignatureInfo {
+                    witness_id: s.witness_id.clone(),
+                    signature: hex::encode(&s.signature),
+                })
+                .collect()
+        }
+        witness_core::signature_scheme::AttestationSignatures::Aggregated { signature, signers } => {
+            signers
+                .iter()
+                .map(|signer| SignatureInfo {
+                    witness_id: signer.clone(),
+                    signature: hex::encode(signature),
+                })
+                .collect()
+        }
+    };
 
-        async function updateStats() {{
-            try {{
-                const stats = await fetchJson('/admin/api/stats');
-                document.getElementById('total-attestations').textContent =
-                    stats.total_attestations.toLocaleString();
-                document.getElementById('attestations-24h').textContent =
-                    stats.attestations_24h.toLocaleString();
-                document.getElementById('total-batches').textContent =
-                    stats.total_batches.toLocaleString();
-                document.getElementById('uptime').textContent = formatUptime(stats.uptime_seconds);
-            }} catch (e) {{
-                console.error('Failed to fetch stats:', e);
-            }}
-        }}
+    let timestamp = attestation.attestation.timestamp;
+    let datetime = chrono_from_timestamp(timestamp);
 
-        async function updateWitnesses() {{
-            try {{
-                const witnesses = await fetchJson('/admin/api/witnesses');
-                const container = document.getElementById('witnesses');
-                container.innerHTML = witnesses.map(w => `
-                    <div class="witness">
-                        <span class="dot ${{w.status === 'online' ? 'online' : 'offline'}}"></span>
-                        <span>${{w.id}}</span>
-                        ${{w.latency_ms ? `<span class="latency">${{w.latency_ms}}ms</span>` : ''}}
-                    </div>
-                `).join('');
-            }} catch (e) {{
-                console.error('Failed to fetch witnesses:', e);
-            }}
-        }}
+    Ok(Json(AttestationDetail {
+        hash: hex::encode(attestation.attestation.hash),
+        timestamp,
+        timestamp_human: datetime,
+        network_id: attestation.attestation.network_id.clone(),
+        sequence: attestation.attestation.sequence,
+        signatures,
+        batch_id: batch_id.map(|b| b as u64),
+        anchor_proofs,
+    }))
+}
 
-        async function updateRecent() {{
-            try {{
-                const recent = await fetchJson('/admin/api/recent');
-                const tbody = document.getElementById('recent');
-                if (recent.length === 0) {{
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No attestations yet</td></tr>';
-                    return;
-                }}
-                tbody.innerHTML = recent.map(a => `
-                    <tr>
-                        <td><span class="hash">${{a.hash.substring(0, 16)}}...</span></td>
-                        <td>#${{a.sequence}}</td>
-                        <td><span class="badge success">${{a.signature_count}} sigs</span></td>
-                        <td class="time-ago">${{a.time_ago}}</td>
-                    </tr>
-                `).join('');
-            }} catch (e) {{
-                console.error('Failed to fetch recent:', e);
-            }}
-        }}
+#[derive(Deserialize)]
+struct PaginationQuery {
+    page: Option<u64>,
+    limit: Option<u64>,
+    search: Option<String>,
+}
 
-        async function updateAnchors() {{
-            try {{
-                const anchors = await fetchJson('/admin/api/anchors');
-                const container = document.getElementById('anchors');
-                if (anchors.length === 0) {{
-                    container.innerHTML = '<div class="anchor" style="color: var(--text-dim);">No external anchors configured</div>';
-                    return;
-                }}
-                container.innerHTML = anchors.map(a => `
-                    <div class="anchor">
-                        <span class="dot ${{a.enabled ? (a.last_anchor_time ? 'online' : 'loading') : 'offline'}}"></span>
-                        <span class="name">${{a.provider}}</span>
-                        <span class="info">${{a.last_anchor_ago ? 'Last: ' + a.last_anchor_ago : (a.enabled ? 'Pending' : 'Disabled')}}</span>
-                    </div>
-                `).join('');
-            }} catch (e) {{
-                console.error('Failed to fetch anchors:', e);
-            }}
-        }}
+#[derive(Serialize)]
+struct AttestationsResponse {
+    attestations: Vec<AttestationListItem>,
+    total: u64,
+    page: u64,
+    pages: u64,
+}
 
-        // Initial load
-        updateStats();
-        updateWitnesses();
-        updateRecent();
-        updateAnchors();
+#[derive(Serialize)]
+struct AttestationListItem {
+    hash: String,
+    timestamp: u64,
+    network_id: String,
+    sequence: u64,
+    signature_count: usize,
+    batch_id: Option<u64>,
+    time_ago: String,
+}
 
-        // Refresh periodically
-        setInterval(updateStats, 10000);
-        setInterval(updateWitnesses, 30000);
-        setInterval(updateRecent, 5000);
-        setInterval(updateAnchors, 60000);
-    </script>
-</body>
-</html>
-"##,
-        network_id = config.id,
-        signature_scheme = config.signature_scheme,
-        threshold = config.threshold,
-        witness_count = config.witnesses.len(),
-    )
+async fn attestations_handler(
+    State(state): State<AdminState>,
+    Query(query): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(50).min(100);
+    let search = query.search.filter(|s| s.len() >= 8);
+
+    let (attestations, total) = state
+        .storage
+        .get_attestations_paginated(page, limit, search.as_deref())
+        .await
+        .unwrap_or_default();
+
+    let now = now_secs();
+    let pages = (total + limit - 1) / limit;
+
+    let items: Vec<AttestationListItem> = attestations
+        .into_iter()
+        .map(|(signed, batch_id)| AttestationListItem {
+            hash: hex::encode(signed.attestation.hash),
+            timestamp: signed.attestation.timestamp,
+            network_id: signed.attestation.network_id.clone(),
+            sequence: signed.attestation.sequence,
+            signature_count: signed.signature_count(),
+            batch_id: batch_id.map(|b| b as u64),
+            time_ago: format_time_ago(now.saturating_sub(signed.attestation.timestamp)),
+        })
+        .collect();
+
+    Json(AttestationsResponse {
+        attestations: items,
+        total,
+        page,
+        pages,
+    })
+}
+
+#[derive(Serialize)]
+struct BatchesResponse {
+    batches: Vec<BatchInfo>,
+    total: u64,
+    page: u64,
+    pages: u64,
+}
+
+#[derive(Serialize)]
+struct BatchInfo {
+    id: u64,
+    merkle_root: String,
+    attestation_count: u64,
+    created_at: u64,
+    anchored: bool,
+}
+
+async fn batches_handler(
+    State(state): State<AdminState>,
+    Query(query): Query<PaginationQuery>,
+) -> impl IntoResponse {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(20).min(100);
+
+    let (batches, total) = state
+        .storage
+        .get_batches_paginated(page, limit)
+        .await
+        .unwrap_or_default();
+
+    let pages = (total + limit - 1) / limit;
+
+    let items: Vec<BatchInfo> = batches
+        .into_iter()
+        .map(|(batch, anchored)| BatchInfo {
+            id: batch.id,
+            merkle_root: hex::encode(batch.merkle_root),
+            attestation_count: batch.attestation_count,
+            created_at: batch.period_end,
+            anchored,
+        })
+        .collect();
+
+    Json(BatchesResponse {
+        batches: items,
+        total,
+        page,
+        pages,
+    })
 }
 
 // ============================================================================
@@ -564,4 +478,58 @@ fn format_time_ago(seconds: u64) -> String {
     } else {
         format!("{}d ago", seconds / 86400)
     }
+}
+
+fn chrono_from_timestamp(timestamp: u64) -> String {
+    use std::fmt::Write;
+
+    let secs = timestamp;
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Calculate year, month, day from days since epoch
+    // Using a simplified algorithm
+    let mut days = days_since_epoch as i64;
+    let mut year = 1970i32;
+
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+
+    let days_in_months: [i64; 12] = if is_leap_year(year) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut month = 1u32;
+    for &dim in &days_in_months {
+        if days < dim {
+            break;
+        }
+        days -= dim;
+        month += 1;
+    }
+    let day = days + 1;
+
+    let mut result = String::new();
+    let _ = write!(
+        result,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    );
+    result
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }

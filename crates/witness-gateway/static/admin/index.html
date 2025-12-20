@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Witness Dashboard</title>
+    <link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <header>
+                <h1><span class="accent">Witness</span> Dashboard</h1>
+                <div class="meta" id="network-info">Loading...</div>
+            </header>
+
+            <div class="search-bar">
+                <input type="text" id="hash-search" placeholder="Lookup attestation by hash (min 8 characters)...">
+                <button id="search-btn">Search</button>
+            </div>
+
+            <nav class="tabs">
+                <button class="tab active" data-tab="overview">Overview</button>
+                <button class="tab" data-tab="attestations">Attestations</button>
+                <button class="tab" data-tab="batches">Batches</button>
+                <button class="tab" data-tab="anchors">Anchors</button>
+            </nav>
+
+            <main>
+                <!-- Overview Tab -->
+                <section id="overview" class="tab-content active">
+                    <div class="grid">
+                        <div class="card">
+                            <div class="card-title">Total Attestations</div>
+                            <div class="stat" id="total-attestations">-</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Last 24 Hours</div>
+                            <div class="stat" id="attestations-24h">-</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Throughput</div>
+                            <div class="stat stat-small" id="throughput">-</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Uptime</div>
+                            <div class="stat stat-small" id="uptime">-</div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <div class="section-title">Witnesses</div>
+                        <div class="witnesses" id="witnesses">
+                            <div class="witness"><span class="dot loading"></span> Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <div class="section-title">External Anchors</div>
+                        <div class="anchor-grid" id="anchors-overview">
+                            <div class="anchor">Loading...</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="section-title">Recent Attestations</div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Hash</th>
+                                    <th>Sequence</th>
+                                    <th>Signatures</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent">
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Attestations Tab -->
+                <section id="attestations" class="tab-content">
+                    <div class="card">
+                        <div class="section-title">
+                            All Attestations
+                            <span class="total-count" id="attestations-total"></span>
+                        </div>
+                        <div class="table-controls">
+                            <input type="text" id="attestation-filter" placeholder="Filter by hash prefix...">
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Hash</th>
+                                    <th>Sequence</th>
+                                    <th>Network</th>
+                                    <th>Signatures</th>
+                                    <th>Batch</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="attestations-table">
+                                <tr><td colspan="6" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="pagination" id="attestations-pagination"></div>
+                    </div>
+                </section>
+
+                <!-- Batches Tab -->
+                <section id="batches" class="tab-content">
+                    <div class="card">
+                        <div class="section-title">
+                            Attestation Batches
+                            <span class="total-count" id="batches-total"></span>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Merkle Root</th>
+                                    <th>Attestations</th>
+                                    <th>Period</th>
+                                    <th>Anchored</th>
+                                </tr>
+                            </thead>
+                            <tbody id="batches-table">
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="pagination" id="batches-pagination"></div>
+                    </div>
+                </section>
+
+                <!-- Anchors Tab -->
+                <section id="anchors" class="tab-content">
+                    <div class="card">
+                        <div class="section-title">External Anchor Providers</div>
+                        <div id="anchor-details">
+                            <div class="loading-cell">Loading...</div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <footer>
+                <a href="https://github.com/flammafex/witness">Witness</a> -
+                Post-Blockchain Timestamping
+            </footer>
+        </div>
+    </div>
+
+    <!-- Attestation Detail Modal -->
+    <div id="attestation-modal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Attestation Details</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div id="attestation-detail"></div>
+            <div class="modal-footer">
+                <button id="copy-json-btn" class="btn">Copy JSON</button>
+                <button class="btn btn-secondary modal-close-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Toast -->
+    <div id="error-toast" class="toast hidden">
+        <span id="error-message"></span>
+        <button class="toast-close">&times;</button>
+    </div>
+
+    <script src="/admin/app.js"></script>
+</body>
+</html>
