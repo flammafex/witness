@@ -10,7 +10,6 @@ use witness_core::{
 use crate::storage::Storage;
 
 /// Client for federation operations with peer networks
-#[allow(dead_code)] // Reserved for cross-network federation feature
 pub struct FederationClient {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
@@ -32,7 +31,6 @@ impl FederationClient {
     }
 
     /// Submit a batch to all peer networks for cross-anchoring
-    #[allow(dead_code)] // Reserved for cross-network federation feature
     pub async fn cross_anchor_batch(&self, batch: &AttestationBatch) -> Result<Vec<CrossAnchor>> {
         if !self.config.federation.enabled {
             return Ok(Vec::new());

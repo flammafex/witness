@@ -1,4 +1,6 @@
 use anyhow::Result;
+use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use reqwest::Client;
 use witness_core::{
     AnchorProviderType, AnchorRequest, AnchorResponse, ExternalAnchorProof,
@@ -196,13 +198,11 @@ impl AnchorProvider for InternetArchiveProvider {
 
 /// Ethereum/EVM anchor provider
 /// Anchors batch roots by sending a 0-value transaction with the root in input data.
-#[allow(dead_code)] // TODO: Wire up blockchain provider in anchor_manager.rs
 pub struct EthereumProvider {
     client: SignerMiddleware<Provider<Http>, LocalWallet>,
 }
 
 impl EthereumProvider {
-    #[allow(dead_code)] // TODO: Wire up blockchain provider in anchor_manager.rs
     pub async fn new(rpc_url: &str, private_key: &str) -> Result<Self> {
         let provider = Provider::<Http>::try_from(rpc_url)?;
         let chain_id = provider.get_chainid().await?;
@@ -622,24 +622,54 @@ impl AnchorProvider for DnsTxtProvider {
     }
 
     async fn verify(&self, proof: &ExternalAnchorProof) -> Result<bool> {
-        // Extract record name from proof
+        // Extract record name and expected value from proof
         let record_name = proof
             .proof
             .get("record_name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing record_name in proof"))?;
 
-        // Note: In a real implementation, you would use a DNS resolver to query the TXT record
-        // For now, we'll just verify the proof structure is valid
+        let expected_value = proof
+            .proof
+            .get("record_value")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing record_value in proof"))?;
+
         tracing::info!("Verifying DNS TXT record: {}", record_name);
 
-        // TODO: Implement actual DNS resolution using trust-dns-resolver or similar
-        // For now, return true if the proof has the required fields
-        let has_required_fields = proof.proof.get("record_value").is_some()
-            && proof.proof.get("domain").is_some()
-            && proof.proof.get("merkle_root").is_some();
+        // Create DNS resolver
+        let resolver = TokioAsyncResolver::tokio(
+            ResolverConfig::default(),
+            ResolverOpts::default(),
+        );
 
-        Ok(has_required_fields)
+        // Query TXT records
+        match resolver.txt_lookup(record_name).await {
+            Ok(txt_records) => {
+                // Check if any TXT record matches the expected value
+                for record in txt_records.iter() {
+                    let record_data: String = record
+                        .iter()
+                        .map(|data| String::from_utf8_lossy(data).to_string())
+                        .collect();
+
+                    if record_data == expected_value {
+                        tracing::info!("DNS TXT record verified successfully: {}", record_name);
+                        return Ok(true);
+                    }
+                }
+
+                tracing::warn!(
+                    "DNS TXT record found but value mismatch for: {}",
+                    record_name
+                );
+                Ok(false)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to resolve DNS TXT record {}: {}", record_name, e);
+                Ok(false)
+            }
+        }
     }
 }
 

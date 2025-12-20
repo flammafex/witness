@@ -33,3 +33,4 @@ clap.workspace = true
 hex.workspace = true
 base64.workspace = true
 async-trait = "0.1"
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }

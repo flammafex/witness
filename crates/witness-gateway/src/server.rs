@@ -14,6 +14,7 @@ use witness_core::{
 };
 
 use crate::admin::{admin_router, AdminState};
+use crate::anchor_manager::AnchorManager;
 use crate::batch_manager::BatchManager;
 use crate::federation_client::FederationClient;
 use crate::storage::Storage;
@@ -28,6 +29,7 @@ pub struct GatewayServer {
     batch_manager: Arc<BatchManager>,
     #[allow(dead_code)] // Reserved for future federation features
     federation_client: Arc<FederationClient>,
+    anchor_manager: Arc<AnchorManager>,
 }
 
 impl GatewayServer {
@@ -36,6 +38,7 @@ impl GatewayServer {
         storage: Arc<Storage>,
         batch_manager: Arc<BatchManager>,
         federation_client: Arc<FederationClient>,
+        anchor_manager: Arc<AnchorManager>,
     ) -> Self {
         Self {
             config,
@@ -43,6 +46,7 @@ impl GatewayServer {
             witness_client: Arc::new(WitnessClient::new()),
             batch_manager,
             federation_client,
+            anchor_manager,
         }
     }
 
@@ -57,6 +61,7 @@ impl GatewayServer {
             .route("/v1/federation/anchor", post(federation_anchor_handler))
             // Phase 3: External anchor endpoints
             .route("/v1/anchors/:hash", get(get_anchors_handler))
+            .route("/v1/batches/:batch_id/verify-anchors", get(verify_anchors_handler))
             .layer(CorsLayer::permissive())
             .with_state(self);
 
@@ -429,6 +434,43 @@ async fn get_anchors_handler(
             Ok(Json(Vec::<ExternalAnchorProof>::new()))
         }
     }
+}
+
+// Phase 3: Verify anchor proofs for a batch
+async fn verify_anchors_handler(
+    State(server): State<GatewayServer>,
+    axum::extract::Path(batch_id): axum::extract::Path<u64>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Verifying anchor proofs for batch: {}", batch_id);
+
+    let results = server
+        .anchor_manager
+        .verify_batch_anchors(batch_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to verify anchors: {}", e);
+            AppError::InternalError
+        })?;
+
+    // Get the proofs to return detailed results
+    let proofs = server.storage.get_anchor_proofs(batch_id).await?;
+
+    let verification_results: Vec<serde_json::Value> = proofs
+        .into_iter()
+        .zip(results.into_iter())
+        .map(|(proof, valid)| {
+            serde_json::json!({
+                "provider": format!("{}", proof.provider),
+                "timestamp": proof.timestamp,
+                "valid": valid,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "batch_id": batch_id,
+        "verifications": verification_results,
+    })))
 }
 
 // Error handling

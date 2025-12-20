@@ -4,6 +4,7 @@ use tokio::time;
 use witness_core::{AttestationBatch, MerkleTree, NetworkConfig};
 
 use crate::anchor_manager::AnchorManager;
+use crate::federation_client::FederationClient;
 use crate::storage::Storage;
 
 /// Manages periodic batch closing for federation
@@ -12,6 +13,7 @@ pub struct BatchManager {
     storage: Arc<Storage>,
     last_batch_time: Arc<tokio::sync::Mutex<u64>>,
     anchor_manager: Option<Arc<AnchorManager>>,
+    federation_client: Option<Arc<FederationClient>>,
 }
 
 impl BatchManager {
@@ -26,12 +28,19 @@ impl BatchManager {
             storage,
             last_batch_time: Arc::new(tokio::sync::Mutex::new(now)),
             anchor_manager: None,
+            federation_client: None,
         }
     }
 
     /// Set the anchor manager (must be called before start)
     pub fn with_anchor_manager(mut self, anchor_manager: Arc<AnchorManager>) -> Self {
         self.anchor_manager = Some(anchor_manager);
+        self
+    }
+
+    /// Set the federation client (must be called before start)
+    pub fn with_federation_client(mut self, federation_client: Arc<FederationClient>) -> Self {
+        self.federation_client = Some(federation_client);
         self
     }
 
@@ -128,6 +137,26 @@ impl BatchManager {
         // Trigger external anchoring if enabled
         if let Some(anchor_manager) = &self.anchor_manager {
             anchor_manager.clone().anchor_batch_async(final_batch.clone());
+        }
+
+        // Trigger federation cross-anchoring if enabled
+        if let Some(federation_client) = &self.federation_client {
+            let client = federation_client.clone();
+            let batch_clone = final_batch.clone();
+            tokio::spawn(async move {
+                match client.cross_anchor_batch(&batch_clone).await {
+                    Ok(cross_anchors) => {
+                        tracing::info!(
+                            "Successfully obtained {} cross-anchors for batch {}",
+                            cross_anchors.len(),
+                            batch_clone.id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to cross-anchor batch {}: {}", batch_clone.id, e);
+                    }
+                }
+            });
         }
 
         Ok(Some(final_batch))

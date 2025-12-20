@@ -5,7 +5,7 @@ use witness_core::{
     AttestationBatch, ExternalAnchorProof, NetworkConfig,
 };
 
-use crate::anchor_providers::{AnchorProvider, DnsTxtProvider, InternetArchiveProvider, TrillianProvider};
+use crate::anchor_providers::{AnchorProvider, DnsTxtProvider, EthereumProvider, InternetArchiveProvider, TrillianProvider};
 use crate::storage::Storage;
 
 /// Manages external anchoring of batches to public services
@@ -16,7 +16,7 @@ pub struct AnchorManager {
 }
 
 impl AnchorManager {
-    pub fn new(config: Arc<NetworkConfig>, storage: Arc<Storage>) -> Self {
+    pub async fn new(config: Arc<NetworkConfig>, storage: Arc<Storage>) -> Self {
         let mut providers: Vec<Arc<dyn AnchorProvider>> = Vec::new();
 
         // Initialize enabled anchor providers
@@ -56,8 +56,22 @@ impl AnchorManager {
                         }
                     }
                     AnchorProviderType::Blockchain => {
-                        tracing::warn!("Blockchain provider not yet implemented");
-                        // TODO: providers.push(Arc::new(BlockchainProvider::new()));
+                        let rpc_url = provider_config.config.get("rpc_url").and_then(|v| v.as_str());
+                        let private_key = provider_config.config.get("private_key").and_then(|v| v.as_str());
+
+                        if let (Some(rpc_url), Some(private_key)) = (rpc_url, private_key) {
+                            tracing::info!("Initializing Ethereum/EVM anchor provider: {}", rpc_url);
+                            match EthereumProvider::new(rpc_url, private_key).await {
+                                Ok(provider) => {
+                                    providers.push(Arc::new(provider));
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to initialize Ethereum provider: {}", e);
+                                }
+                            }
+                        } else {
+                            tracing::error!("Blockchain provider enabled but missing 'rpc_url' or 'private_key' in config");
+                        }
                     }
                 }
             }
@@ -202,7 +216,6 @@ impl AnchorManager {
     }
 
     /// Verify all anchor proofs for a batch
-    #[allow(dead_code)] // Reserved for anchor verification feature
     pub async fn verify_batch_anchors(&self, batch_id: u64) -> Result<Vec<bool>> {
         let proofs = self.storage.get_anchor_proofs(batch_id).await?;
         let mut results = Vec::new();

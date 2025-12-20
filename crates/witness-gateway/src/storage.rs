@@ -530,7 +530,6 @@ impl Storage {
     }
 
     /// Store a cross-anchor
-    #[allow(dead_code)] // Reserved for cross-network federation feature
     pub async fn store_cross_anchor(&self, cross_anchor: &CrossAnchor) -> Result<()> {
         // Insert cross-anchor
         let result = sqlx::query(

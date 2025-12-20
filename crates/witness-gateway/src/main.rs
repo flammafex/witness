@@ -102,19 +102,20 @@ async fn main() -> Result<()> {
     let anchor_manager = Arc::new(AnchorManager::new(
         network_config.clone(),
         storage.clone(),
-    ));
-
-    // Initialize batch manager (Phase 2) with anchor manager
-    let batch_manager = Arc::new(
-        BatchManager::new(network_config.clone(), storage.clone())
-            .with_anchor_manager(anchor_manager.clone())
-    );
+    ).await);
 
     // Initialize federation client (Phase 2)
     let federation_client = Arc::new(FederationClient::new(
         network_config.clone(),
         storage.clone(),
     ));
+
+    // Initialize batch manager (Phase 2) with anchor manager and federation client
+    let batch_manager = Arc::new(
+        BatchManager::new(network_config.clone(), storage.clone())
+            .with_anchor_manager(anchor_manager.clone())
+            .with_federation_client(federation_client.clone())
+    );
 
     // Start batch manager background task
     batch_manager.clone().start();
@@ -133,6 +134,7 @@ async fn main() -> Result<()> {
         storage,
         batch_manager,
         federation_client,
+        anchor_manager,
     );
     server.run(args.port, admin_state).await?;
 
