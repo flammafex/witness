@@ -4,6 +4,8 @@ use std::fs;
 use witness_core::FreebirdToken;
 
 use crate::client::WitnessClient;
+use crate::freebird_client::FreebirdIssuerClient;
+use crate::token_wallet::TokenWallet;
 
 pub async fn run(
     gateway_url: &str,
@@ -15,6 +17,8 @@ pub async fn run(
     freebird_token_b64: Option<String>,
     freebird_issuer: Option<String>,
     freebird_exp: Option<u64>,
+    freebird_acquire: Option<String>,
+    freebird_wallet: bool,
 ) -> Result<()> {
     // Determine the hash to timestamp
     let hash = if let Some(path) = file_path {
@@ -49,16 +53,16 @@ pub async fn run(
         anyhow::bail!("Must provide either --file or --hash");
     };
 
-    // Build Freebird token if provided
+    // Build Freebird token from various sources
     let freebird_token = if let Some(token_path) = freebird_token_path {
-        // Read token from JSON file
+        // Option 1: Read token from JSON file
         let token_content = fs::read_to_string(&token_path)
             .with_context(|| format!("Failed to read Freebird token file: {}", token_path))?;
         let token: FreebirdToken = serde_json::from_str(&token_content)
             .with_context(|| "Failed to parse Freebird token JSON")?;
         Some(token)
     } else if let Some(token_b64) = freebird_token_b64 {
-        // Build token from inline arguments
+        // Option 2: Build token from inline arguments
         let issuer_id = freebird_issuer
             .ok_or_else(|| anyhow::anyhow!("--freebird-issuer is required with --freebird-token-b64"))?;
         let exp = freebird_exp
@@ -68,6 +72,34 @@ pub async fn run(
             issuer_id,
             exp,
         })
+    } else if let Some(issuer_url) = freebird_acquire {
+        // Option 3: Acquire token from issuer (seamless flow)
+        if output_format == "text" {
+            println!("Acquiring Freebird token from {}...", issuer_url);
+        }
+        let mut client = FreebirdIssuerClient::new(&issuer_url);
+        let token = client.issue_token().await
+            .context("Failed to acquire Freebird token")?;
+        if output_format == "text" {
+            println!("Token acquired from issuer: {}", client.issuer_id().unwrap_or("unknown"));
+        }
+        Some(token)
+    } else if freebird_wallet {
+        // Option 4: Use token from wallet
+        let mut wallet = TokenWallet::load()?;
+        match wallet.take_token(None)? {
+            Some(token) => {
+                if output_format == "text" {
+                    println!("Using token from wallet (issuer: {})", token.issuer_id);
+                }
+                Some(token)
+            }
+            None => {
+                anyhow::bail!(
+                    "No available tokens in wallet. Fetch tokens with: witness token fetch --issuer <URL>"
+                );
+            }
+        }
     } else {
         None
     };

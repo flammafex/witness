@@ -172,27 +172,45 @@ export FREEBIRD_REQUIRED=true
 
 #### CLI Usage
 
+The CLI provides multiple ways to use Freebird tokens, from fully automatic to manual:
+
 ```bash
+# Seamless (recommended): Acquire token inline during timestamp request
+witness timestamp --file doc.pdf --freebird-acquire http://localhost:8081
+
+# From wallet: Pre-fetch tokens and use automatically
+witness token fetch --issuer http://localhost:8081 --count 10
+witness timestamp --file doc.pdf --freebird-wallet
+
 # With token from JSON file
 witness timestamp --file doc.pdf --freebird-token token.json
 
-# With inline token
+# With inline token (advanced)
 witness timestamp --hash abc123... \
   --freebird-token-b64 "..." \
   --freebird-issuer "issuer:prod:v1" \
   --freebird-exp 1699454445
 ```
 
-#### Obtaining Tokens
+#### Token Wallet
 
-Tokens are issued by a Freebird issuer. See the [Freebird documentation](https://github.com/flammafex/freebird) for setup instructions.
+The CLI includes a token wallet for pre-fetching and caching tokens locally:
 
 ```bash
-# Example: Get a token from a local Freebird issuer
-curl -X POST http://localhost:8081/v1/oprf/issue \
-  -H "Content-Type: application/json" \
-  -d '{"blinded_element_b64": "..."}' > token.json
+# Fetch tokens from an issuer
+witness token fetch --issuer http://localhost:8081 --count 10
+
+# List wallet contents
+witness token list
+
+# Clean up used/expired tokens
+witness token cleanup
+
+# Show wallet file location
+witness token path
 ```
+
+Pre-fetching tokens is useful when you know you'll need multiple timestamps, or when you want to separate token acquisition from timestamping operations.
 
 ### External Anchoring (Phase 3)
 
