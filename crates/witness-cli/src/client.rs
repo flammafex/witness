@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
 use witness_core::{
-    ExternalAnchorProof, NetworkConfig, SignedAttestation, TimestampRequest, TimestampResponse,
-    VerifyRequest, VerifyResponse,
+    ExternalAnchorProof, FreebirdToken, NetworkConfig, SignedAttestation, TimestampRequest,
+    TimestampResponse, VerifyRequest, VerifyResponse,
 };
 
 pub struct WitnessClient {
@@ -24,11 +24,16 @@ impl WitnessClient {
         }
     }
 
-    pub async fn timestamp(&self, hash: &str) -> Result<SignedAttestation> {
+    pub async fn timestamp(
+        &self,
+        hash: &str,
+        freebird_token: Option<FreebirdToken>,
+    ) -> Result<SignedAttestation> {
         let url = format!("{}/v1/timestamp", self.gateway_url);
 
         let request = TimestampRequest {
             hash: hash.to_string(),
+            freebird_token,
         };
 
         let response = self

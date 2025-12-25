@@ -26,3 +26,10 @@ clap.workspace = true
 hex.workspace = true
 sha2.workspace = true
 chrono = "0.4"
+dirs = "5.0"
+base64 = "0.21"
+
+# VOPRF crypto for Freebird token acquisition
+p256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+rand = "0.8"
+hmac = "0.12"

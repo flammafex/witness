@@ -136,6 +136,82 @@ Each datacenter hosts witnesses from *all* networks—no single datacenter failu
 
 ## Advanced Configuration
 
+### Freebird Integration (Sybil Resistance)
+
+Witness integrates with [Freebird](https://github.com/flammafex/freebird)—an anonymous token system that provides "authorization without identity." This enables Sybil resistance without IP-based rate limiting or privacy-invasive tracking.
+
+**How it works:**
+- One Freebird token = one timestamp request
+- Tokens are unlinkable, unforgeable, and single-use
+- No user accounts or tracking required
+
+#### Configuration
+
+Set the following environment variables to enable Freebird:
+
+```bash
+# URL of your Freebird verifier
+export FREEBIRD_VERIFIER_URL=http://localhost:8082
+
+# Comma-separated list of trusted issuer IDs
+export FREEBIRD_ISSUER_IDS=issuer:freebird:v1,issuer:prod:v1
+
+# If true, reject requests without valid tokens (default: false)
+export FREEBIRD_REQUIRED=true
+```
+
+**Permissive mode** (`FREEBIRD_REQUIRED=false`, default):
+- Requests with valid tokens → proceed (token consumed)
+- Requests with invalid tokens → reject
+- Requests without tokens → proceed (allows development/testing)
+
+**Strict mode** (`FREEBIRD_REQUIRED=true`):
+- Requests with valid tokens → proceed (token consumed)
+- Requests with invalid tokens → reject
+- Requests without tokens → reject
+
+#### CLI Usage
+
+The CLI provides multiple ways to use Freebird tokens, from fully automatic to manual:
+
+```bash
+# Seamless (recommended): Acquire token inline during timestamp request
+witness timestamp --file doc.pdf --freebird-acquire http://localhost:8081
+
+# From wallet: Pre-fetch tokens and use automatically
+witness token fetch --issuer http://localhost:8081 --count 10
+witness timestamp --file doc.pdf --freebird-wallet
+
+# With token from JSON file
+witness timestamp --file doc.pdf --freebird-token token.json
+
+# With inline token (advanced)
+witness timestamp --hash abc123... \
+  --freebird-token-b64 "..." \
+  --freebird-issuer "issuer:prod:v1" \
+  --freebird-exp 1699454445
+```
+
+#### Token Wallet
+
+The CLI includes a token wallet for pre-fetching and caching tokens locally:
+
+```bash
+# Fetch tokens from an issuer
+witness token fetch --issuer http://localhost:8081 --count 10
+
+# List wallet contents
+witness token list
+
+# Clean up used/expired tokens
+witness token cleanup
+
+# Show wallet file location
+witness token path
+```
+
+Pre-fetching tokens is useful when you know you'll need multiple timestamps, or when you want to separate token acquisition from timestamping operations.
+
 ### External Anchoring (Phase 3)
 
 For maximum security and public verifiability, enable **external anchoring** to submit batch merkle roots to public services.
