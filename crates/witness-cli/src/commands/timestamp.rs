@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
+use witness_core::FreebirdToken;
 
 use crate::client::WitnessClient;
 
@@ -10,6 +11,10 @@ pub async fn run(
     hash_hex: Option<String>,
     output_format: &str,
     save_path: Option<String>,
+    freebird_token_path: Option<String>,
+    freebird_token_b64: Option<String>,
+    freebird_issuer: Option<String>,
+    freebird_exp: Option<u64>,
 ) -> Result<()> {
     // Determine the hash to timestamp
     let hash = if let Some(path) = file_path {
@@ -44,13 +49,40 @@ pub async fn run(
         anyhow::bail!("Must provide either --file or --hash");
     };
 
+    // Build Freebird token if provided
+    let freebird_token = if let Some(token_path) = freebird_token_path {
+        // Read token from JSON file
+        let token_content = fs::read_to_string(&token_path)
+            .with_context(|| format!("Failed to read Freebird token file: {}", token_path))?;
+        let token: FreebirdToken = serde_json::from_str(&token_content)
+            .with_context(|| "Failed to parse Freebird token JSON")?;
+        Some(token)
+    } else if let Some(token_b64) = freebird_token_b64 {
+        // Build token from inline arguments
+        let issuer_id = freebird_issuer
+            .ok_or_else(|| anyhow::anyhow!("--freebird-issuer is required with --freebird-token-b64"))?;
+        let exp = freebird_exp
+            .ok_or_else(|| anyhow::anyhow!("--freebird-exp is required with --freebird-token-b64"))?;
+        Some(FreebirdToken {
+            token_b64,
+            issuer_id,
+            exp,
+        })
+    } else {
+        None
+    };
+
     // Request timestamp
     if output_format == "text" {
-        println!("Requesting timestamp from gateway...");
+        if freebird_token.is_some() {
+            println!("Requesting timestamp with Freebird token...");
+        } else {
+            println!("Requesting timestamp from gateway...");
+        }
     }
 
     let client = WitnessClient::new(gateway_url);
-    let attestation = client.timestamp(&hash).await?;
+    let attestation = client.timestamp(&hash, freebird_token).await?;
 
     // Output results
     match output_format {

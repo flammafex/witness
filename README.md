@@ -136,6 +136,64 @@ Each datacenter hosts witnesses from *all* networks—no single datacenter failu
 
 ## Advanced Configuration
 
+### Freebird Integration (Sybil Resistance)
+
+Witness integrates with [Freebird](https://github.com/flammafex/freebird)—an anonymous token system that provides "authorization without identity." This enables Sybil resistance without IP-based rate limiting or privacy-invasive tracking.
+
+**How it works:**
+- One Freebird token = one timestamp request
+- Tokens are unlinkable, unforgeable, and single-use
+- No user accounts or tracking required
+
+#### Configuration
+
+Set the following environment variables to enable Freebird:
+
+```bash
+# URL of your Freebird verifier
+export FREEBIRD_VERIFIER_URL=http://localhost:8082
+
+# Comma-separated list of trusted issuer IDs
+export FREEBIRD_ISSUER_IDS=issuer:freebird:v1,issuer:prod:v1
+
+# If true, reject requests without valid tokens (default: false)
+export FREEBIRD_REQUIRED=true
+```
+
+**Permissive mode** (`FREEBIRD_REQUIRED=false`, default):
+- Requests with valid tokens → proceed (token consumed)
+- Requests with invalid tokens → reject
+- Requests without tokens → proceed (allows development/testing)
+
+**Strict mode** (`FREEBIRD_REQUIRED=true`):
+- Requests with valid tokens → proceed (token consumed)
+- Requests with invalid tokens → reject
+- Requests without tokens → reject
+
+#### CLI Usage
+
+```bash
+# With token from JSON file
+witness timestamp --file doc.pdf --freebird-token token.json
+
+# With inline token
+witness timestamp --hash abc123... \
+  --freebird-token-b64 "..." \
+  --freebird-issuer "issuer:prod:v1" \
+  --freebird-exp 1699454445
+```
+
+#### Obtaining Tokens
+
+Tokens are issued by a Freebird issuer. See the [Freebird documentation](https://github.com/flammafex/freebird) for setup instructions.
+
+```bash
+# Example: Get a token from a local Freebird issuer
+curl -X POST http://localhost:8081/v1/oprf/issue \
+  -H "Content-Type: application/json" \
+  -d '{"blinded_element_b64": "..."}' > token.json
+```
+
 ### External Anchoring (Phase 3)
 
 For maximum security and public verifiability, enable **external anchoring** to submit batch merkle roots to public services.

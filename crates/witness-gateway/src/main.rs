@@ -3,6 +3,7 @@ mod anchor_manager;
 mod anchor_providers;
 mod batch_manager;
 mod federation_client;
+mod freebird;
 mod server;
 mod storage;
 mod witness_client;
@@ -18,6 +19,7 @@ use admin::AdminState;
 use anchor_manager::AnchorManager;
 use batch_manager::BatchManager;
 use federation_client::FederationClient;
+use freebird::FreebirdClient;
 use server::GatewayServer;
 use storage::Storage;
 
@@ -127,12 +129,27 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Initialize Freebird client from environment variables
+    let freebird_client = FreebirdClient::from_env().map(Arc::new);
+    if let Some(ref client) = freebird_client {
+        let config = client.config();
+        tracing::info!(
+            "Freebird enabled: verifier={}, required={}, trusted_issuers={}",
+            config.verifier_url.as_deref().unwrap_or("none"),
+            config.required,
+            config.issuer_ids.len()
+        );
+    } else {
+        tracing::info!("Freebird disabled (no FREEBIRD_VERIFIER_URL set)");
+    }
+
     // Start server
     let server = GatewayServer::new(
         network_config,
         storage,
         batch_manager,
         federation_client,
+        freebird_client,
     );
     server.run(args.port, admin_state).await?;
 

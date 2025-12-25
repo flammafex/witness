@@ -38,6 +38,22 @@ enum Commands {
         /// Save attestation to file
         #[arg(short, long)]
         save: Option<String>,
+
+        /// Path to Freebird token JSON file
+        #[arg(long)]
+        freebird_token: Option<String>,
+
+        /// Base64-encoded Freebird token (alternative to --freebird-token)
+        #[arg(long, conflicts_with = "freebird_token")]
+        freebird_token_b64: Option<String>,
+
+        /// Freebird issuer ID (required with --freebird-token-b64)
+        #[arg(long, requires = "freebird_token_b64")]
+        freebird_issuer: Option<String>,
+
+        /// Freebird token expiration Unix timestamp (required with --freebird-token-b64)
+        #[arg(long, requires = "freebird_token_b64")]
+        freebird_exp: Option<u64>,
     },
 
     /// Get an existing timestamp by hash
@@ -79,8 +95,28 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Timestamp { file, hash, output, save } => {
-            timestamp::run(&cli.gateway, file, hash, &output, save).await?;
+        Commands::Timestamp {
+            file,
+            hash,
+            output,
+            save,
+            freebird_token,
+            freebird_token_b64,
+            freebird_issuer,
+            freebird_exp,
+        } => {
+            timestamp::run(
+                &cli.gateway,
+                file,
+                hash,
+                &output,
+                save,
+                freebird_token,
+                freebird_token_b64,
+                freebird_issuer,
+                freebird_exp,
+            )
+            .await?;
         }
         Commands::Get { hash, output } => {
             get::run(&cli.gateway, &hash, &output).await?;

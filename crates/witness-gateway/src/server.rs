@@ -21,6 +21,7 @@ use witness_core::{
 use crate::admin::{admin_router, AdminState};
 use crate::batch_manager::BatchManager;
 use crate::federation_client::FederationClient;
+use crate::freebird::{FreebirdClient, FreebirdError};
 use crate::storage::Storage;
 use crate::witness_client::WitnessClient;
 
@@ -40,6 +41,7 @@ pub struct GatewayServer {
     witness_client: Arc<WitnessClient>,
     batch_manager: Arc<BatchManager>,
     federation_client: Arc<FederationClient>,
+    freebird_client: Option<Arc<FreebirdClient>>,
     event_tx: broadcast::Sender<AttestationEvent>,
 }
 
@@ -49,6 +51,7 @@ impl GatewayServer {
         storage: Arc<Storage>,
         batch_manager: Arc<BatchManager>,
         federation_client: Arc<FederationClient>,
+        freebird_client: Option<Arc<FreebirdClient>>,
     ) -> Self {
         // Create broadcast channel for WebSocket events with capacity 256
         let (event_tx, _) = broadcast::channel(256);
@@ -59,6 +62,7 @@ impl GatewayServer {
             witness_client: Arc::new(WitnessClient::new()),
             batch_manager,
             federation_client,
+            freebird_client,
             event_tx,
         }
     }
@@ -109,6 +113,25 @@ async fn timestamp_handler(
     Json(request): Json<TimestampRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     tracing::info!("Received timestamp request for hash: {}", request.hash);
+
+    // Check Freebird token if configured
+    if let Some(ref freebird) = server.freebird_client {
+        match &request.freebird_token {
+            Some(token) => {
+                // Verify token with Freebird verifier
+                freebird.verify(token).await?;
+                // Token is consumed by verifier (nullifier recorded)
+                tracing::info!("Freebird token verified for hash: {}", request.hash);
+            }
+            None if freebird.is_required() => {
+                return Err(AppError::FreebirdTokenRequired);
+            }
+            None => {
+                // Permissive mode - allow without token
+                tracing::debug!("No Freebird token provided (permissive mode)");
+            }
+        }
+    }
 
     // Parse hash
     let hash_bytes = hex::decode(&request.hash)
@@ -470,6 +493,10 @@ enum AppError {
     InternalError,
     DatabaseError(sqlx::Error),
     Other(anyhow::Error),
+    // Freebird errors
+    FreebirdTokenRequired,
+    FreebirdTokenInvalid,
+    FreebirdVerificationFailed(String),
 }
 
 impl From<sqlx::Error> for AppError {
@@ -481,6 +508,22 @@ impl From<sqlx::Error> for AppError {
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
         AppError::Other(e)
+    }
+}
+
+impl From<FreebirdError> for AppError {
+    fn from(e: FreebirdError) -> Self {
+        match e {
+            FreebirdError::TokenRequired => AppError::FreebirdTokenRequired,
+            FreebirdError::TokenInvalid | FreebirdError::TokenExpired => AppError::FreebirdTokenInvalid,
+            FreebirdError::UntrustedIssuer(issuer) => {
+                AppError::FreebirdVerificationFailed(format!("Untrusted issuer: {}", issuer))
+            }
+            FreebirdError::VerificationFailed(msg) => AppError::FreebirdVerificationFailed(msg),
+            FreebirdError::HttpError(e) => {
+                AppError::FreebirdVerificationFailed(format!("HTTP error: {}", e))
+            }
+        }
     }
 }
 
@@ -502,6 +545,17 @@ impl IntoResponse for AppError {
             AppError::Other(e) => {
                 tracing::error!("Error: {}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string())
+            }
+            // Freebird errors
+            AppError::FreebirdTokenRequired => {
+                (StatusCode::UNAUTHORIZED, "Freebird token required".to_string())
+            }
+            AppError::FreebirdTokenInvalid => {
+                (StatusCode::FORBIDDEN, "Freebird token invalid or already used".to_string())
+            }
+            AppError::FreebirdVerificationFailed(msg) => {
+                tracing::error!("Freebird verification failed: {}", msg);
+                (StatusCode::BAD_GATEWAY, format!("Freebird verification failed: {}", msg))
             }
         };
 

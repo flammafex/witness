@@ -185,6 +185,37 @@ impl NetworkConfig {
 pub struct TimestampRequest {
     /// SHA-256 hash to timestamp (hex encoded)
     pub hash: String,
+
+    /// Optional Freebird token for Sybil resistance
+    #[serde(default)]
+    pub freebird_token: Option<FreebirdToken>,
+}
+
+/// Freebird token for anonymous authorization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreebirdToken {
+    /// Base64-encoded token (131 or 195 bytes)
+    pub token_b64: String,
+
+    /// Issuer ID that created this token
+    pub issuer_id: String,
+
+    /// Token expiration (Unix timestamp)
+    pub exp: u64,
+}
+
+/// Configuration for Freebird integration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreebirdConfig {
+    /// Freebird verifier URL (e.g., "http://localhost:8082")
+    pub verifier_url: Option<String>,
+
+    /// Trusted issuer ID(s)
+    pub issuer_ids: Vec<String>,
+
+    /// Whether Freebird is required (false = permissive mode for dev)
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// Response from successful timestamp request
