@@ -13,7 +13,7 @@ Witness is a federated threshold-signed timestamping service. It provides crypto
 - **External Anchoring:** Batch merkle roots to Internet Archive, Trillian, DNS, or Ethereum
 - **Light Clients:** Merkle proofs for verification without full history
 - **Privacy:** Only hashes are submitted, not content
-- **Sybil Resistance:** Optional [Freebird](https://github.com/flammafex/freebird) integration for anonymous rate limiting
+- **Sybil Resistance:** Optional [Freebird](https://git.carpocratian.org/sibyl/freebird) integration for anonymous rate limiting
 
 ## Quick Start
 
