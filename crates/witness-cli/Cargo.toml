@@ -1,0 +1,35 @@
+[package]
+name = "witness-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command-line tool for interacting with the Witness timestamping network"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["timestamp", "cli", "witness", "verification", "cryptography"]
+categories = ["command-line-utilities", "cryptography"]
+
+[[bin]]
+name = "witness"
+path = "src/main.rs"
+
+[dependencies]
+witness-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+hex.workspace = true
+sha2.workspace = true
+chrono = "0.4"
+dirs = "5.0"
+base64 = "0.21"
+
+# VOPRF crypto for Freebird token acquisition
+p256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+rand = "0.8"
+hmac = "0.12"

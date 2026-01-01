@@ -1,0 +1,22 @@
+{
+  "id": "gateway2-network",
+  "threshold": 2,
+  "witnesses": [
+    {
+      "id": "gateway2-witness-1",
+      "pubkey": "0a94b4239b21b0c5bf9da02f8dd2c0a233e405c2b631cf4d770b72816c8a0ca7",
+      "endpoint": "http://localhost:4004"
+    },
+    {
+      "id": "gateway2-witness-2",
+      "pubkey": "47272801443e19fe97694e6471c5996cd010e75a6802a8b3b4d7a5836a979723",
+      "endpoint": "http://localhost:4005"
+    },
+    {
+      "id": "gateway2-witness-3",
+      "pubkey": "85a97b7c370b671bbda264e6f68256466b64e646fd2487e07f0604350280578f",
+      "endpoint": "http://localhost:4006"
+    }
+  ],
+  "federation_peers": []
+}

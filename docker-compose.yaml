@@ -1,0 +1,157 @@
+services:
+  # ============================================================================
+  # SETUP SERVICE (Ephemeral)
+  # ============================================================================
+  # This service runs once to generate keys and configuration files for the
+  # cluster. It saves them to the shared 'witness-config' volume.
+  setup:
+    build:
+      context: .
+      target: witness-node
+    volumes:
+      - witness-config:/data
+    entrypoint: ["/bin/bash", "-c"]
+    # Script to generate keys for 3 witnesses and create network.json
+    command:
+      - |
+        if [ -f /data/network.json ]; then
+          echo "✅ Configuration already exists. Skipping setup."
+          exit 0
+        fi
+
+        echo "🔧 Generating Witness Keys..."
+        
+        # Helper to generate node config and return pubkey
+        gen_config() {
+          ID=$1
+          # Generate keypair using the binary
+          OUT=$$(witness-node --generate-key)
+          PRIV=$$(echo "$$OUT" | grep "Private key:" | awk '{print $$3}')
+          PUB=$$(echo "$$OUT" | grep "Public key:" | awk '{print $$3}')
+          
+          # Write Node Config
+          echo "{\"id\": \"witness-$$ID\", \"private_key\": \"$$PRIV\", \"port\": 3000, \"network_id\": \"docker-net\", \"max_clock_skew\": 300}" > /data/witness$$ID.json
+          echo "$$PUB"
+        }
+
+        PUB1=$$(gen_config 1)
+        PUB2=$$(gen_config 2)
+        PUB3=$$(gen_config 3)
+
+        echo "📝 Creating network.json..."
+        cat > /data/network.json <<EOF
+        {
+          "id": "docker-net",
+          "threshold": 2,
+          "witnesses": [
+            { "id": "witness-1", "pubkey": "$$PUB1", "endpoint": "http://witness-1:3000" },
+            { "id": "witness-2", "pubkey": "$$PUB2", "endpoint": "http://witness-2:3000" },
+            { "id": "witness-3", "pubkey": "$$PUB3", "endpoint": "http://witness-3:3000" }
+          ],
+          "federation_peers": [],
+          "external_anchors": { "enabled": false, "providers": [] }
+        }
+        EOF
+        
+        echo "✅ Setup complete."
+
+  # ============================================================================
+  # WITNESS NODES
+  # ============================================================================
+  witness-1:
+    build:
+      context: .
+      target: witness-node
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - witness-config:/data
+    command: ["witness-node", "--config", "/data/witness1.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - witness-net
+
+  witness-2:
+    build:
+      context: .
+      target: witness-node
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - witness-config:/data
+    command: ["witness-node", "--config", "/data/witness2.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - witness-net
+
+  witness-3:
+    build:
+      context: .
+      target: witness-node
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - witness-config:/data
+    command: ["witness-node", "--config", "/data/witness3.json"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - witness-net
+
+  # ============================================================================
+  # GATEWAY
+  # ============================================================================
+  gateway:
+    build:
+      context: .
+      target: witness-gateway
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      witness-1:
+        condition: service_healthy
+      witness-2:
+        condition: service_healthy
+      witness-3:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - witness-config:/config
+      - gateway-data:/data
+    environment:
+      - RUST_LOG=info,witness_gateway=debug
+    # Point config to the shared volume, and db to the persistence volume
+    command: ["witness-gateway", "--config", "/config/network.json", "--port", "8080", "--database", "/data/gateway.db"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - witness-net
+
+volumes:
+  witness-config: # Shared keys and network.json
+  gateway-data:   # SQLite database persistence
+
+networks:
+  witness-net:

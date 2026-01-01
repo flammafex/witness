@@ -1,0 +1,9 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+#Mac artifacts
+.DS_Store
+#Witness artifacts
+*.log
+*.pid
+*.db

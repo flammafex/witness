@@ -1,0 +1,21 @@
+[package]
+name = "witness-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core types and cryptography primitives for the Witness timestamping system"
+repository.workspace = true
+homepage.workspace = true
+keywords = ["timestamp", "cryptography", "threshold", "signatures", "bls"]
+categories = ["cryptography", "data-structures"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+blst.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+rand.workspace = true
