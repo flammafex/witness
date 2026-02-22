@@ -77,7 +77,7 @@ impl FreebirdClient {
 
         let consume_tokens = std::env::var("FREEBIRD_CONSUME_TOKENS")
             .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false);
+            .unwrap_or(true);
 
         let config = FreebirdConfig {
             verifier_url,
@@ -102,9 +102,8 @@ impl FreebirdClient {
     /// Verify a Freebird token
     ///
     /// Depending on the `consume_tokens` config:
-    /// - If false (default): Uses /v1/check to validate without consumption.
-    ///   The token remains valid for use elsewhere (e.g., Day Pass in Clout).
-    /// - If true: Uses /v1/verify which records the nullifier, preventing reuse.
+    /// - If true (default): Uses /v1/verify which records the nullifier, preventing reuse.
+    /// - If false: Uses /v1/check to validate without consumption.
     ///
     /// Returns Ok(()) if the token is valid.
     /// Returns Err if the token is invalid, expired, or verification failed.

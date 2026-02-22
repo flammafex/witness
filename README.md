@@ -197,10 +197,13 @@ Anonymous rate limiting without user tracking:
 export FREEBIRD_VERIFIER_URL=http://localhost:8082
 export FREEBIRD_ISSUER_IDS=issuer:prod:v1
 export FREEBIRD_REQUIRED=true  # Reject requests without valid tokens
+export FREEBIRD_CONSUME_TOKENS=true  # Default: consume tokens via /v1/verify (recommended)
 
 # CLI usage
 witness timestamp --file doc.pdf --freebird-acquire http://localhost:8081
 ```
+
+`FREEBIRD_CONSUME_TOKENS=false` switches to non-consuming `/v1/check` mode. This allows token reuse until expiry and should only be used for explicit proof-of-possession flows with strict rate limiting.
 
 ## Production Deployment
 

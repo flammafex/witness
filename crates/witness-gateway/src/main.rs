@@ -140,12 +140,24 @@ async fn main() -> Result<()> {
     let freebird_client = FreebirdClient::from_env().map(Arc::new);
     if let Some(ref client) = freebird_client {
         let config = client.config();
+        let mode = if config.consume_tokens {
+            "/v1/verify (consuming)"
+        } else {
+            "/v1/check (non-consuming)"
+        };
         tracing::info!(
-            "Freebird enabled: verifier={}, required={}, trusted_issuers={}",
+            "Freebird enabled: verifier={}, required={}, mode={}, trusted_issuers={}",
             config.verifier_url.as_deref().unwrap_or("none"),
             config.required,
+            mode,
             config.issuer_ids.len()
         );
+        if !config.consume_tokens {
+            tracing::warn!(
+                "Freebird non-consuming mode is enabled (FREEBIRD_CONSUME_TOKENS=false). \
+                 Tokens can be reused until expiry; use only for explicit proof-of-possession flows."
+            );
+        }
     } else {
         tracing::info!("Freebird disabled (no FREEBIRD_VERIFIER_URL set)");
     }

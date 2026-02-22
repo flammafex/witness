@@ -133,7 +133,8 @@ async fn timestamp_handler(
             Some(token) => {
                 // Verify token with Freebird verifier
                 freebird.verify(token).await?;
-                // Token is consumed by verifier (nullifier recorded)
+                // In default mode the token is consumed (nullifier recorded).
+                // If FREEBIRD_CONSUME_TOKENS=false, gateway uses non-consuming checks.
                 tracing::info!("Freebird token verified for hash: {}", request.hash);
             }
             None if freebird.is_required() => {

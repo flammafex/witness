@@ -220,13 +220,18 @@ pub struct FreebirdConfig {
     #[serde(default)]
     pub required: bool,
 
-    /// Whether to consume tokens on verification (default: false)
+    /// Whether to consume tokens on verification (default: true)
     ///
     /// If true, uses /v1/verify which records the nullifier and prevents reuse.
-    /// If false, uses /v1/check which validates without consumption, allowing
-    /// tokens (like Day Passes) to be reused elsewhere (e.g., in Clout).
-    #[serde(default)]
+    /// If false, uses /v1/check which validates without consumption.
+    /// Non-consuming mode should only be used for explicit proof-of-possession
+    /// use cases and requires strict rate limiting.
+    #[serde(default = "default_freebird_consume_tokens")]
     pub consume_tokens: bool,
+}
+
+fn default_freebird_consume_tokens() -> bool {
+    true
 }
 
 /// Response from successful timestamp request
