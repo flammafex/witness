@@ -17,6 +17,9 @@ pub enum WitnessError {
     #[error("Witness not found: {0}")]
     WitnessNotFound(String),
 
+    #[error("Duplicate signer: {0}")]
+    DuplicateSigner(String),
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
 

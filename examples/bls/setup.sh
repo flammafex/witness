@@ -29,6 +29,8 @@ for i in 1 2 3; do
 
     PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
     PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+    AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+    eval "AUTH_TOKEN$i=$AUTH_TOKEN"
 
     # Create witness config
     cat > "$BLS_DIR/witness-$i.json" <<EOF
@@ -38,7 +40,9 @@ for i in 1 2 3; do
   "private_key": "$PRIVKEY",
   "network_id": "bls-network",
   "port": $((8000 + i)),
-  "max_clock_skew": 300
+  "host": "127.0.0.1",
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
 
@@ -85,17 +89,20 @@ cat > "$BLS_DIR/network.json" <<EOF
     {
       "id": "witness-1",
       "pubkey": "$PUBKEY1",
-      "endpoint": "http://localhost:8001"
+      "endpoint": "http://localhost:8001",
+      "auth_token": "$AUTH_TOKEN1"
     },
     {
       "id": "witness-2",
       "pubkey": "$PUBKEY2",
-      "endpoint": "http://localhost:8002"
+      "endpoint": "http://localhost:8002",
+      "auth_token": "$AUTH_TOKEN2"
     },
     {
       "id": "witness-3",
       "pubkey": "$PUBKEY3",
-      "endpoint": "http://localhost:8003"
+      "endpoint": "http://localhost:8003",
+      "auth_token": "$AUTH_TOKEN3"
     }
   ]
 }

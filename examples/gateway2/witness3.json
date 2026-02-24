@@ -2,6 +2,8 @@
   "id": "gateway2-witness-3",
   "private_key": "967805e6723f151cd1c78794ca88342928be29b0faa2a742d9536a26d088dfe4",
   "port": 4006,
+  "host": "127.0.0.1",
   "network_id": "gateway2-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "g2w3_dev_token_replace_me"
 }

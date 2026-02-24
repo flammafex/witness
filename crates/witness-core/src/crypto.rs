@@ -1,10 +1,11 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 use crate::{
-    signature_scheme::AttestationSignatures, Attestation, NetworkConfig, Result,
-    SignedAttestation, SignatureScheme, WitnessError,
+    signature_scheme::AttestationSignatures, Attestation, NetworkConfig, Result, SignatureScheme,
+    SignedAttestation, WitnessError,
 };
 
 /// Generate a new Ed25519 keypair
@@ -29,8 +30,7 @@ pub fn verify_signature(
 ) -> Result<()> {
     let message = attestation.to_bytes();
 
-    let sig = Signature::from_slice(signature)
-        .map_err(|_| WitnessError::InvalidSignature)?;
+    let sig = Signature::from_slice(signature).map_err(|_| WitnessError::InvalidSignature)?;
 
     verifying_key
         .verify(&message, &sig)
@@ -52,26 +52,30 @@ pub fn verify_signed_attestation(
                 });
             }
 
+            let mut unique_signers = HashSet::new();
             let mut verified_count = 0;
 
             for witness_sig in signatures {
+                if !unique_signers.insert(witness_sig.witness_id.clone()) {
+                    return Err(WitnessError::DuplicateSigner(
+                        witness_sig.witness_id.clone(),
+                    ));
+                }
+
                 // Find witness in config
                 let witness_info = config
                     .find_witness(&witness_sig.witness_id)
-                    .ok_or_else(|| {
-                        WitnessError::WitnessNotFound(witness_sig.witness_id.clone())
-                    })?;
+                    .ok_or_else(|| WitnessError::WitnessNotFound(witness_sig.witness_id.clone()))?;
 
                 // Decode public key
                 let pubkey_bytes = hex::decode(&witness_info.pubkey)
                     .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
 
-                let verifying_key = VerifyingKey::from_bytes(
-                    pubkey_bytes.as_slice().try_into().map_err(|_| {
+                let verifying_key =
+                    VerifyingKey::from_bytes(pubkey_bytes.as_slice().try_into().map_err(|_| {
                         WitnessError::InvalidPublicKey("Invalid key length".to_string())
-                    })?,
-                )
-                .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
+                    })?)
+                    .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
 
                 // Verify signature
                 if verify_signature(&signed.attestation, &witness_sig.signature, &verifying_key)
@@ -107,10 +111,16 @@ pub fn verify_signed_attestation(
                 });
             }
 
+            let mut unique_signers = HashSet::new();
+
             // Collect public keys for all signers
             let mut public_keys = Vec::new();
 
             for signer_id in signers {
+                if !unique_signers.insert(signer_id.clone()) {
+                    return Err(WitnessError::DuplicateSigner(signer_id.clone()));
+                }
+
                 let witness_info = config
                     .find_witness(signer_id)
                     .ok_or_else(|| WitnessError::WitnessNotFound(signer_id.clone()))?;
@@ -120,11 +130,7 @@ pub fn verify_signed_attestation(
             }
 
             // Verify aggregated signature
-            crate::verify_aggregated_signature_bls(
-                &signed.attestation,
-                signature,
-                &public_keys,
-            )?;
+            crate::verify_aggregated_signature_bls(&signed.attestation, signature, &public_keys)?;
 
             Ok(signers.len())
         }
@@ -148,21 +154,37 @@ pub fn encode_public_key(key: &VerifyingKey) -> String {
 
 /// Decode public key from hex
 pub fn decode_public_key(hex_str: &str) -> Result<VerifyingKey> {
-    let bytes = hex::decode(hex_str)
-        .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
+    let bytes = hex::decode(hex_str).map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
 
     let key_bytes: [u8; 32] = bytes
         .as_slice()
         .try_into()
         .map_err(|_| WitnessError::InvalidPublicKey("Invalid key length".to_string()))?;
 
-    VerifyingKey::from_bytes(&key_bytes)
-        .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))
+    VerifyingKey::from_bytes(&key_bytes).map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AttestationSignatures, SignedAttestation, WitnessInfo, WitnessSignature};
+
+    fn test_network_config(pubkey: String) -> NetworkConfig {
+        NetworkConfig {
+            id: "test-net".to_string(),
+            witnesses: vec![WitnessInfo {
+                id: "w1".to_string(),
+                pubkey,
+                endpoint: "http://localhost:3001".to_string(),
+                auth_token: Some("token-1".to_string()),
+            }],
+            threshold: 1,
+            signature_scheme: SignatureScheme::Ed25519,
+            federation: Default::default(),
+            external_anchors: Default::default(),
+            federation_peers: vec![],
+        }
+    }
 
     #[test]
     fn test_sign_and_verify() {
@@ -199,5 +221,34 @@ mod tests {
         let encoded = encode_public_key(&verifying_key);
         let decoded = decode_public_key(&encoded).unwrap();
         assert_eq!(verifying_key, decoded);
+    }
+
+    #[test]
+    fn test_reject_duplicate_multisig_signers() {
+        let (signing_key, verifying_key) = generate_keypair();
+        let attestation = Attestation::new([1; 32], "test-net".to_string(), 1);
+        let signature = sign_attestation(&attestation, &signing_key);
+        let config = test_network_config(encode_public_key(&verifying_key));
+
+        let signed = SignedAttestation {
+            attestation,
+            signatures: AttestationSignatures::MultiSig {
+                signatures: vec![
+                    WitnessSignature {
+                        witness_id: "w1".to_string(),
+                        signature: signature.clone(),
+                    },
+                    WitnessSignature {
+                        witness_id: "w1".to_string(),
+                        signature,
+                    },
+                ],
+            },
+        };
+
+        assert!(matches!(
+            verify_signed_attestation(&signed, &config),
+            Err(WitnessError::DuplicateSigner(id)) if id == "w1"
+        ));
     }
 }

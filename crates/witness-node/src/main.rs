@@ -1,5 +1,5 @@
-mod server;
 mod config;
+mod server;
 
 use anyhow::Result;
 use clap::Parser;
@@ -20,6 +20,10 @@ struct Args {
     /// HTTP port to listen on
     #[arg(short, long)]
     port: Option<u16>,
+
+    /// Host/interface to bind to (default from config, usually 127.0.0.1)
+    #[arg(long)]
+    host: Option<String>,
 
     /// Generate a new keypair and exit
     #[arg(long)]
@@ -48,8 +52,14 @@ async fn main() -> Result<()> {
             let (secret_key, public_key) = witness_core::generate_bls_keypair();
 
             println!("Generated new BLS keypair:");
-            println!("Public key:  {}", witness_core::encode_bls_public_key(&public_key));
-            println!("Private key: {}", witness_core::encode_bls_secret_key(&secret_key));
+            println!(
+                "Public key:  {}",
+                witness_core::encode_bls_public_key(&public_key)
+            );
+            println!(
+                "Private key: {}",
+                witness_core::encode_bls_secret_key(&secret_key)
+            );
             println!("\nStore the private key securely in your witness configuration.");
             println!("Share the public key with the network coordinator.");
             println!("\nIn your witness config, set:");
@@ -58,7 +68,10 @@ async fn main() -> Result<()> {
             let (signing_key, verifying_key) = witness_core::generate_keypair();
 
             println!("Generated new Ed25519 keypair:");
-            println!("Public key:  {}", witness_core::encode_public_key(&verifying_key));
+            println!(
+                "Public key:  {}",
+                witness_core::encode_public_key(&verifying_key)
+            );
             println!("Private key: {}", hex::encode(signing_key.to_bytes()));
             println!("\nStore the private key securely in your witness configuration.");
             println!("Share the public key with the network coordinator.");
@@ -71,14 +84,15 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = WitnessNodeConfig::load(&args.config)?;
     let port = args.port.unwrap_or(config.port);
+    let host = args.host.unwrap_or_else(|| config.host.clone());
 
     tracing::info!("Starting witness node: {}", config.id);
     tracing::info!("Public key: {}", config.public_key());
-    tracing::info!("Listening on port: {}", port);
+    tracing::info!("Listening on {}:{}", host, port);
 
     // Start server
     let server = WitnessServer::new(config);
-    server.run(port).await?;
+    server.run(&host, port).await?;
 
     Ok(())
 }

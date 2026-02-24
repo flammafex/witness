@@ -101,7 +101,8 @@ impl SignedAttestation {
 
     /// Add a signature (only works for multi-sig)
     pub fn add_signature(&mut self, witness_id: String, signature: Vec<u8>) {
-        self.signatures.add_signature_multisig(witness_id, signature);
+        self.signatures
+            .add_signature_multisig(witness_id, signature);
     }
 
     /// Get count of signers
@@ -126,6 +127,11 @@ pub struct WitnessInfo {
 
     /// HTTP endpoint for this witness
     pub endpoint: String,
+
+    /// Bearer token used by gateways when calling this witness's signing endpoint.
+    /// Never serialized in public API responses.
+    #[serde(default, skip_serializing)]
+    pub auth_token: Option<String>,
 }
 
 /// Network configuration
@@ -161,7 +167,7 @@ impl NetworkConfig {
     pub fn validate(&self) -> crate::Result<()> {
         if self.witnesses.is_empty() {
             return Err(crate::WitnessError::InvalidPublicKey(
-                "No witnesses configured".to_string()
+                "No witnesses configured".to_string(),
             ));
         }
 
@@ -365,6 +371,7 @@ mod tests {
                 id: "w1".to_string(),
                 pubkey: "abc123".to_string(),
                 endpoint: "http://localhost:3001".to_string(),
+                auth_token: Some("token-1".to_string()),
             }],
             threshold: 1,
             signature_scheme: Default::default(),
@@ -395,6 +402,7 @@ mod tests {
                 id: "w1".to_string(),
                 pubkey: "abc123".to_string(),
                 endpoint: "http://localhost:3001".to_string(),
+                auth_token: Some("token-1".to_string()),
             }],
             threshold: 5, // Only 1 witness
             signature_scheme: Default::default(),
@@ -415,11 +423,13 @@ mod tests {
                     id: "w1".to_string(),
                     pubkey: "key1".to_string(),
                     endpoint: "http://localhost:3001".to_string(),
+                    auth_token: Some("token-1".to_string()),
                 },
                 WitnessInfo {
                     id: "w2".to_string(),
                     pubkey: "key2".to_string(),
                     endpoint: "http://localhost:3002".to_string(),
+                    auth_token: Some("token-2".to_string()),
                 },
             ],
             threshold: 1,

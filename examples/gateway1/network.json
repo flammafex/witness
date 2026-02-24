@@ -5,17 +5,20 @@
     {
       "id": "gateway1-witness-1",
       "pubkey": "4d8fa383ef16c2afe2f222c158fbe56707697e3324e32c0c531f1717042e14a7",
-      "endpoint": "http://localhost:4001"
+      "endpoint": "http://localhost:4001",
+      "auth_token": "g1w1_dev_token_replace_me"
     },
     {
       "id": "gateway1-witness-2",
       "pubkey": "fa457977b5dc9c4e9b064b4afda60ecce6958bb0da494b814ccffba4d3a53f01",
-      "endpoint": "http://localhost:4002"
+      "endpoint": "http://localhost:4002",
+      "auth_token": "g1w2_dev_token_replace_me"
     },
     {
       "id": "gateway1-witness-3",
       "pubkey": "2d8ef88cb54b28a6bb0952fb6940667f049d777befe6bf15c11c477293e17f93",
-      "endpoint": "http://localhost:4003"
+      "endpoint": "http://localhost:4003",
+      "auth_token": "g1w3_dev_token_replace_me"
     }
   ],
   "federation_peers": []

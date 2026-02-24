@@ -12,7 +12,6 @@ use futures_util::{SinkExt, StreamExt};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
 use witness_core::{
     Attestation, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof, MerkleTree,
     NetworkConfig, SignatureScheme, SignedAttestation, TimestampRequest, TimestampResponse,
@@ -73,7 +72,12 @@ impl GatewayServer {
         }
     }
 
-    pub async fn run(self, port: u16, admin_state: Option<AdminState>) -> anyhow::Result<()> {
+    pub async fn run(
+        self,
+        host: &str,
+        port: u16,
+        admin_state: Option<AdminState>,
+    ) -> anyhow::Result<()> {
         let mut app = Router::new()
             .route("/", get(root_handler))
             .route("/health", get(health_handler))
@@ -90,7 +94,6 @@ impl GatewayServer {
             .route("/v1/proof/:hash", get(get_proof_handler))
             // WebSocket events endpoint
             .route("/ws/events", get(ws_events_handler))
-            .layer(CorsLayer::permissive())
             .with_state(self);
 
         // Add admin dashboard if enabled
@@ -98,7 +101,7 @@ impl GatewayServer {
             app = app.nest("/admin", admin_router(admin));
         }
 
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("{}:{}", host, port);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         tracing::info!("Gateway listening on {}", addr);
@@ -148,19 +151,19 @@ async fn timestamp_handler(
     }
 
     // Parse hash
-    let hash_bytes = hex::decode(&request.hash)
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash_bytes = hex::decode(&request.hash).map_err(|_| AppError::InvalidHash)?;
 
-    let hash: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
     // Check for duplicate
     if server.storage.check_duplicate(&hash).await? {
         tracing::info!("Hash already timestamped: {}", request.hash);
 
         // Return existing attestation
-        let existing = server.storage.get_attestation(&hash).await?
+        let existing = server
+            .storage
+            .get_attestation(&hash)
+            .await?
             .ok_or(AppError::InternalError)?;
 
         return Ok(Json(TimestampResponse {
@@ -256,8 +259,8 @@ async fn timestamp_handler(
             }
 
             // Aggregate BLS signatures
-            let aggregated_signature = witness_core::aggregate_signatures_bls(&individual_signatures)
-                .map_err(|e| {
+            let aggregated_signature =
+                witness_core::aggregate_signatures_bls(&individual_signatures).map_err(|e| {
                     tracing::error!("BLS aggregation failed: {}", e);
                     AppError::InvalidSignature
                 })?;
@@ -276,8 +279,8 @@ async fn timestamp_handler(
     };
 
     // Verify signatures
-    let verified_count = witness_core::verify_signed_attestation(&signed, &server.config)
-        .map_err(|e| {
+    let verified_count =
+        witness_core::verify_signed_attestation(&signed, &server.config).map_err(|e| {
             tracing::error!("Signature verification failed: {}", e);
             AppError::InvalidSignature
         })?;
@@ -316,12 +319,9 @@ async fn get_timestamp_handler(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Looking up timestamp for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash)
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
 
-    let hash_array: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
     let attestation = server
         .storage
@@ -336,7 +336,10 @@ async fn verify_handler(
     State(server): State<GatewayServer>,
     Json(request): Json<VerifyRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    tracing::info!("Verifying attestation for hash: {}", hex::encode(request.attestation.attestation.hash));
+    tracing::info!(
+        "Verifying attestation for hash: {}",
+        hex::encode(request.attestation.attestation.hash)
+    );
 
     match witness_core::verify_signed_attestation(&request.attestation, &server.config) {
         Ok(verified_count) => {
@@ -386,7 +389,10 @@ async fn federation_anchor_handler(
         sequence,
     );
 
-    tracing::debug!("Created attestation for batch cross-anchor: {}", attestation);
+    tracing::debug!(
+        "Created attestation for batch cross-anchor: {}",
+        attestation
+    );
 
     // Request signatures from all witnesses
     let mut tasks = Vec::new();
@@ -466,12 +472,9 @@ async fn get_anchors_handler(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Looking up external anchors for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash)
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
 
-    let hash_array: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| AppError::InvalidHash)?;
+    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
     // First, check if the attestation exists
     let _attestation = server
@@ -489,10 +492,8 @@ async fn get_anchors_handler(
     match batch_id {
         Some(batch_id) => {
             // Get anchor proofs for this batch
-            let proofs: Vec<ExternalAnchorProof> = server
-                .storage
-                .get_anchor_proofs(batch_id as u64)
-                .await?;
+            let proofs: Vec<ExternalAnchorProof> =
+                server.storage.get_anchor_proofs(batch_id as u64).await?;
 
             Ok(Json(proofs))
         }
@@ -530,9 +531,7 @@ async fn get_proof_handler(
 
     // Validate hash format
     let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let _: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| AppError::InvalidHash)?;
+    let _: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
     // Get batch info for this attestation
     let batch_info = server
@@ -595,7 +594,9 @@ impl From<anyhow::Error> for AppError {
 impl From<FreebirdError> for AppError {
     fn from(e: FreebirdError) -> Self {
         match e {
-            FreebirdError::TokenInvalid | FreebirdError::TokenExpired => AppError::FreebirdTokenInvalid,
+            FreebirdError::TokenInvalid | FreebirdError::TokenExpired => {
+                AppError::FreebirdTokenInvalid
+            }
             FreebirdError::UntrustedIssuer(issuer) => {
                 AppError::FreebirdVerificationFailed(format!("Untrusted issuer: {}", issuer))
             }
@@ -612,31 +613,53 @@ impl IntoResponse for AppError {
         let (status, message) = match self {
             AppError::InvalidHash => (StatusCode::BAD_REQUEST, "Invalid hash format".to_string()),
             AppError::NotFound => (StatusCode::NOT_FOUND, "Attestation not found".to_string()),
-            AppError::NotBatched => (StatusCode::NOT_FOUND, "Attestation not yet batched".to_string()),
-            AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature".to_string()),
+            AppError::NotBatched => (
+                StatusCode::NOT_FOUND,
+                "Attestation not yet batched".to_string(),
+            ),
+            AppError::InvalidSignature => {
+                (StatusCode::BAD_REQUEST, "Invalid signature".to_string())
+            }
             AppError::InsufficientSignatures { got, required } => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("Insufficient signatures: got {}, required {}", got, required),
+                format!(
+                    "Insufficient signatures: got {}, required {}",
+                    got, required
+                ),
             ),
-            AppError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string()),
+            AppError::InternalError => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal error".to_string(),
+            ),
             AppError::DatabaseError(e) => {
                 tracing::error!("Database error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error".to_string(),
+                )
             }
             AppError::Other(e) => {
                 tracing::error!("Error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal error".to_string(),
+                )
             }
             // Freebird errors
-            AppError::FreebirdTokenRequired => {
-                (StatusCode::UNAUTHORIZED, "Freebird token required".to_string())
-            }
-            AppError::FreebirdTokenInvalid => {
-                (StatusCode::FORBIDDEN, "Freebird token invalid or already used".to_string())
-            }
+            AppError::FreebirdTokenRequired => (
+                StatusCode::UNAUTHORIZED,
+                "Freebird token required".to_string(),
+            ),
+            AppError::FreebirdTokenInvalid => (
+                StatusCode::FORBIDDEN,
+                "Freebird token invalid or already used".to_string(),
+            ),
             AppError::FreebirdVerificationFailed(msg) => {
                 tracing::error!("Freebird verification failed: {}", msg);
-                (StatusCode::BAD_GATEWAY, format!("Freebird verification failed: {}", msg))
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Freebird verification failed: {}", msg),
+                )
             }
         };
 

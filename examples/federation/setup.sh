@@ -28,10 +28,12 @@ for net in a b c; do
         OUTPUT=$(cargo run --release -p witness-node -- --generate-key 2>&1)
         PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
         PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+        AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 
         # Store keys
         eval "NET_${net^^}_W${i}_PUBKEY=$PUBKEY"
         eval "NET_${net^^}_W${i}_PRIVKEY=$PRIVKEY"
+        eval "NET_${net^^}_W${i}_AUTH_TOKEN=$AUTH_TOKEN"
         eval "NET_${net^^}_W${i}_PORT=$((8000 + ($(printf '%d' "'$net") - 97) * 10 + i))"
 
         # Create witness config
@@ -41,8 +43,10 @@ for net in a b c; do
   "id": "witness-$net-$i",
   "private_key": "$PRIVKEY",
   "port": $PORT,
+  "host": "127.0.0.1",
   "network_id": "network-$net",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
     done
@@ -62,17 +66,20 @@ cat > "examples/federation/network-a.json" <<EOF
     {
       "id": "witness-a-1",
       "pubkey": "$NET_A_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W1_PORT"
+      "endpoint": "http://localhost:$NET_A_W1_PORT",
+      "auth_token": "$NET_A_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-a-2",
       "pubkey": "$NET_A_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W2_PORT"
+      "endpoint": "http://localhost:$NET_A_W2_PORT",
+      "auth_token": "$NET_A_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-a-3",
       "pubkey": "$NET_A_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W3_PORT"
+      "endpoint": "http://localhost:$NET_A_W3_PORT",
+      "auth_token": "$NET_A_W3_AUTH_TOKEN"
     }
   ],
   "federation": {
@@ -104,17 +111,20 @@ cat > "examples/federation/network-b.json" <<EOF
     {
       "id": "witness-b-1",
       "pubkey": "$NET_B_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W1_PORT"
+      "endpoint": "http://localhost:$NET_B_W1_PORT",
+      "auth_token": "$NET_B_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-b-2",
       "pubkey": "$NET_B_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W2_PORT"
+      "endpoint": "http://localhost:$NET_B_W2_PORT",
+      "auth_token": "$NET_B_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-b-3",
       "pubkey": "$NET_B_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W3_PORT"
+      "endpoint": "http://localhost:$NET_B_W3_PORT",
+      "auth_token": "$NET_B_W3_AUTH_TOKEN"
     }
   ],
   "federation": {
@@ -146,17 +156,20 @@ cat > "examples/federation/network-c.json" <<EOF
     {
       "id": "witness-c-1",
       "pubkey": "$NET_C_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W1_PORT"
+      "endpoint": "http://localhost:$NET_C_W1_PORT",
+      "auth_token": "$NET_C_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-c-2",
       "pubkey": "$NET_C_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W2_PORT"
+      "endpoint": "http://localhost:$NET_C_W2_PORT",
+      "auth_token": "$NET_C_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-c-3",
       "pubkey": "$NET_C_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W3_PORT"
+      "endpoint": "http://localhost:$NET_C_W3_PORT",
+      "auth_token": "$NET_C_W3_AUTH_TOKEN"
     }
   ],
   "federation": {

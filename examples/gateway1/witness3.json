@@ -2,6 +2,8 @@
   "id": "gateway1-witness-3",
   "private_key": "6c89607dde522f42d9b3eefe0cc99a0569bb9773039fc3d5b5ccf8eae9099593",
   "port": 4003,
+  "host": "127.0.0.1",
   "network_id": "gateway1-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "g1w3_dev_token_replace_me"
 }

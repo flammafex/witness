@@ -24,6 +24,7 @@ for i in 1 2 3; do
 
     PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
     PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+    AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 
     echo "Public key:  $PUBKEY"
     echo "Private key: $PRIVKEY"
@@ -35,14 +36,17 @@ for i in 1 2 3; do
   "id": "witness-$i",
   "private_key": "$PRIVKEY",
   "port": $((3000 + i)),
+  "host": "127.0.0.1",
   "network_id": "example-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
 
     # Store for network config
     eval "WITNESS${i}_PUBKEY=$PUBKEY"
     eval "WITNESS${i}_PORT=$((3000 + i))"
+    eval "WITNESS${i}_AUTH_TOKEN=$AUTH_TOKEN"
 done
 
 echo "Creating network configuration..."
@@ -56,17 +60,20 @@ cat > "examples/network.json" <<EOF
     {
       "id": "witness-1",
       "pubkey": "$WITNESS1_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS1_PORT"
+      "endpoint": "http://localhost:$WITNESS1_PORT",
+      "auth_token": "$WITNESS1_AUTH_TOKEN"
     },
     {
       "id": "witness-2",
       "pubkey": "$WITNESS2_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS2_PORT"
+      "endpoint": "http://localhost:$WITNESS2_PORT",
+      "auth_token": "$WITNESS2_AUTH_TOKEN"
     },
     {
       "id": "witness-3",
       "pubkey": "$WITNESS3_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS3_PORT"
+      "endpoint": "http://localhost:$WITNESS3_PORT",
+      "auth_token": "$WITNESS3_AUTH_TOKEN"
     }
   ],
   "federation_peers": []

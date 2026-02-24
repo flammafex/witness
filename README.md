@@ -137,9 +137,9 @@ curl -X POST http://localhost:8080/v1/timestamp \
   "threshold": 2,
   "signature_scheme": "Ed25519",
   "witnesses": [
-    {"id": "witness-1", "endpoint": "http://localhost:3001", "public_key": "..."},
-    {"id": "witness-2", "endpoint": "http://localhost:3002", "public_key": "..."},
-    {"id": "witness-3", "endpoint": "http://localhost:3003", "public_key": "..."}
+    {"id": "witness-1", "pubkey": "...", "endpoint": "http://localhost:3001", "auth_token": "<random-secret>"},
+    {"id": "witness-2", "pubkey": "...", "endpoint": "http://localhost:3002", "auth_token": "<random-secret>"},
+    {"id": "witness-3", "pubkey": "...", "endpoint": "http://localhost:3003", "auth_token": "<random-secret>"}
   ],
   "federation": {
     "enabled": false,

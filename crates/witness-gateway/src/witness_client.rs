@@ -22,6 +22,11 @@ impl WitnessClient {
         witness: &WitnessInfo,
         attestation: &Attestation,
     ) -> Result<SignResponse> {
+        let auth_token = witness
+            .auth_token
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Missing auth token for witness: {}", witness.id))?;
+
         let url = format!("{}/v1/sign", witness.endpoint);
 
         let request = SignRequest {
@@ -31,6 +36,7 @@ impl WitnessClient {
         let response = self
             .client
             .post(&url)
+            .bearer_auth(auth_token)
             .json(&request)
             .send()
             .await

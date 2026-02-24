@@ -38,6 +38,10 @@ struct Args {
     #[arg(short, long, default_value = "8080")]
     port: u16,
 
+    /// Host/interface to bind to (secure default: localhost)
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
     /// Path to SQLite database
     #[arg(short, long, default_value = "gateway.db")]
     database: PathBuf,
@@ -70,28 +74,47 @@ async fn main() -> Result<()> {
     // Validate configuration
     network_config.validate()?;
 
+    for witness in &network_config.witnesses {
+        if witness.auth_token.as_deref().unwrap_or("").is_empty() {
+            anyhow::bail!(
+                "witness '{}' is missing auth_token in network config",
+                witness.id
+            );
+        }
+    }
+
     tracing::info!("Loaded network configuration: {}", network_config.id);
     tracing::info!("Witnesses: {}", network_config.witnesses.len());
     tracing::info!("Threshold: {}", network_config.threshold);
 
     // Check if federation is enabled
     if network_config.federation.enabled {
-        tracing::info!("Federation enabled with {} peer networks",
-            network_config.federation.peer_networks.len());
-        tracing::info!("Batch period: {} seconds",
-            network_config.federation.batch_period);
+        tracing::info!(
+            "Federation enabled with {} peer networks",
+            network_config.federation.peer_networks.len()
+        );
+        tracing::info!(
+            "Batch period: {} seconds",
+            network_config.federation.batch_period
+        );
     } else {
         tracing::info!("Federation disabled (Phase 1 mode)");
     }
 
     // Check if external anchoring is enabled (Phase 3)
     if network_config.external_anchors.enabled {
-        tracing::info!("External anchoring enabled with {} providers",
-            network_config.external_anchors.providers.len());
-        tracing::info!("Anchor period: {} seconds",
-            network_config.external_anchors.anchor_period);
-        tracing::info!("Minimum required anchors: {}",
-            network_config.external_anchors.minimum_required);
+        tracing::info!(
+            "External anchoring enabled with {} providers",
+            network_config.external_anchors.providers.len()
+        );
+        tracing::info!(
+            "Anchor period: {} seconds",
+            network_config.external_anchors.anchor_period
+        );
+        tracing::info!(
+            "Minimum required anchors: {}",
+            network_config.external_anchors.minimum_required
+        );
     }
 
     // Initialize storage
@@ -108,15 +131,13 @@ async fn main() -> Result<()> {
     let storage = Arc::new(storage);
 
     // Initialize anchor manager (Phase 3)
-    let anchor_manager = Arc::new(AnchorManager::new(
-        network_config.clone(),
-        storage.clone(),
-    ).await);
+    let anchor_manager =
+        Arc::new(AnchorManager::new(network_config.clone(), storage.clone()).await);
 
     // Initialize batch manager (Phase 2) with anchor manager
     let batch_manager = Arc::new(
         BatchManager::new(network_config.clone(), storage.clone())
-            .with_anchor_manager(anchor_manager.clone())
+            .with_anchor_manager(anchor_manager.clone()),
     );
 
     // Initialize federation client (Phase 2)
@@ -198,7 +219,7 @@ async fn main() -> Result<()> {
         freebird_client,
         metrics_handle,
     );
-    server.run(args.port, admin_state).await?;
+    server.run(&args.host, args.port, admin_state).await?;
 
     Ok(())
 }

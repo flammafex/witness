@@ -31,10 +31,12 @@ for i in 1 2 3; do
     OUTPUT=$(cargo run --release -p witness-node -- --generate-key 2>&1)
     PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
     PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+    AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 
     # Store keys
     eval "G1_W${i}_PUBKEY=$PUBKEY"
     eval "G1_W${i}_PRIVKEY=$PRIVKEY"
+    eval "G1_W${i}_AUTH_TOKEN=$AUTH_TOKEN"
     PORT=$((4000 + i))
     eval "G1_W${i}_PORT=$PORT"
 
@@ -44,8 +46,10 @@ for i in 1 2 3; do
   "id": "gateway1-witness-$i",
   "private_key": "$PRIVKEY",
   "port": $PORT,
+  "host": "127.0.0.1",
   "network_id": "gateway1-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
 done
@@ -59,10 +63,12 @@ for i in 1 2 3; do
     OUTPUT=$(cargo run --release -p witness-node -- --generate-key 2>&1)
     PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
     PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+    AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 
     # Store keys
     eval "G2_W${i}_PUBKEY=$PUBKEY"
     eval "G2_W${i}_PRIVKEY=$PRIVKEY"
+    eval "G2_W${i}_AUTH_TOKEN=$AUTH_TOKEN"
     PORT=$((4003 + i))
     eval "G2_W${i}_PORT=$PORT"
 
@@ -72,8 +78,10 @@ for i in 1 2 3; do
   "id": "gateway2-witness-$i",
   "private_key": "$PRIVKEY",
   "port": $PORT,
+  "host": "127.0.0.1",
   "network_id": "gateway2-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
 done
@@ -87,10 +95,12 @@ for i in 1 2 3; do
     OUTPUT=$(cargo run --release -p witness-node -- --generate-key 2>&1)
     PUBKEY=$(echo "$OUTPUT" | grep "Public key:" | awk '{print $3}')
     PRIVKEY=$(echo "$OUTPUT" | grep "Private key:" | awk '{print $3}')
+    AUTH_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 
     # Store keys
     eval "G3_W${i}_PUBKEY=$PUBKEY"
     eval "G3_W${i}_PRIVKEY=$PRIVKEY"
+    eval "G3_W${i}_AUTH_TOKEN=$AUTH_TOKEN"
     PORT=$((4006 + i))
     eval "G3_W${i}_PORT=$PORT"
 
@@ -100,8 +110,10 @@ for i in 1 2 3; do
   "id": "gateway3-witness-$i",
   "private_key": "$PRIVKEY",
   "port": $PORT,
+  "host": "127.0.0.1",
   "network_id": "gateway3-network",
-  "max_clock_skew": 300
+  "max_clock_skew": 300,
+  "signing_auth_token": "$AUTH_TOKEN"
 }
 EOF
 done
@@ -118,17 +130,20 @@ cat > "examples/gateway1/network.json" <<EOF
     {
       "id": "gateway1-witness-1",
       "pubkey": "$G1_W1_PUBKEY",
-      "endpoint": "http://localhost:$G1_W1_PORT"
+      "endpoint": "http://localhost:$G1_W1_PORT",
+      "auth_token": "$G1_W1_AUTH_TOKEN"
     },
     {
       "id": "gateway1-witness-2",
       "pubkey": "$G1_W2_PUBKEY",
-      "endpoint": "http://localhost:$G1_W2_PORT"
+      "endpoint": "http://localhost:$G1_W2_PORT",
+      "auth_token": "$G1_W2_AUTH_TOKEN"
     },
     {
       "id": "gateway1-witness-3",
       "pubkey": "$G1_W3_PUBKEY",
-      "endpoint": "http://localhost:$G1_W3_PORT"
+      "endpoint": "http://localhost:$G1_W3_PORT",
+      "auth_token": "$G1_W3_AUTH_TOKEN"
     }
   ],
   "federation_peers": []
@@ -144,17 +159,20 @@ cat > "examples/gateway2/network.json" <<EOF
     {
       "id": "gateway2-witness-1",
       "pubkey": "$G2_W1_PUBKEY",
-      "endpoint": "http://localhost:$G2_W1_PORT"
+      "endpoint": "http://localhost:$G2_W1_PORT",
+      "auth_token": "$G2_W1_AUTH_TOKEN"
     },
     {
       "id": "gateway2-witness-2",
       "pubkey": "$G2_W2_PUBKEY",
-      "endpoint": "http://localhost:$G2_W2_PORT"
+      "endpoint": "http://localhost:$G2_W2_PORT",
+      "auth_token": "$G2_W2_AUTH_TOKEN"
     },
     {
       "id": "gateway2-witness-3",
       "pubkey": "$G2_W3_PUBKEY",
-      "endpoint": "http://localhost:$G2_W3_PORT"
+      "endpoint": "http://localhost:$G2_W3_PORT",
+      "auth_token": "$G2_W3_AUTH_TOKEN"
     }
   ],
   "federation_peers": []
@@ -170,17 +188,20 @@ cat > "examples/gateway3/network.json" <<EOF
     {
       "id": "gateway3-witness-1",
       "pubkey": "$G3_W1_PUBKEY",
-      "endpoint": "http://localhost:$G3_W1_PORT"
+      "endpoint": "http://localhost:$G3_W1_PORT",
+      "auth_token": "$G3_W1_AUTH_TOKEN"
     },
     {
       "id": "gateway3-witness-2",
       "pubkey": "$G3_W2_PUBKEY",
-      "endpoint": "http://localhost:$G3_W2_PORT"
+      "endpoint": "http://localhost:$G3_W2_PORT",
+      "auth_token": "$G3_W2_AUTH_TOKEN"
     },
     {
       "id": "gateway3-witness-3",
       "pubkey": "$G3_W3_PUBKEY",
-      "endpoint": "http://localhost:$G3_W3_PORT"
+      "endpoint": "http://localhost:$G3_W3_PORT",
+      "auth_token": "$G3_W3_AUTH_TOKEN"
     }
   ],
   "federation_peers": []
