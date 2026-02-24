@@ -49,6 +49,10 @@ struct Args {
     /// Enable admin dashboard UI at /admin
     #[arg(long, default_value = "false")]
     admin_ui: bool,
+
+    /// Admin API key required to access /admin (or set WITNESS_ADMIN_API_KEY)
+    #[arg(long, env = "WITNESS_ADMIN_API_KEY")]
+    admin_api_key: Option<String>,
 }
 
 #[tokio::main]
@@ -150,12 +154,27 @@ async fn main() -> Result<()> {
     batch_manager.clone().start();
 
     // Create admin state if admin UI is enabled
-    let admin_state = if args.admin_ui {
-        tracing::info!("Admin dashboard enabled at /admin");
-        Some(AdminState::new(network_config.clone(), storage.clone()))
+    let admin_api_key = if args.admin_ui {
+        let key = args
+            .admin_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--admin-ui requires --admin-api-key (or WITNESS_ADMIN_API_KEY)"
+                )
+            })?
+            .to_string();
+
+        tracing::info!("Admin dashboard enabled at /admin (auth required)");
+        Some(key)
     } else {
         None
     };
+    let admin_state = admin_api_key
+        .as_ref()
+        .map(|_| AdminState::new(network_config.clone(), storage.clone()));
 
     // Initialize Freebird client from environment variables
     let freebird_client = FreebirdClient::from_env().map(Arc::new);
@@ -219,7 +238,9 @@ async fn main() -> Result<()> {
         freebird_client,
         metrics_handle,
     );
-    server.run(&args.host, args.port, admin_state).await?;
+    server
+        .run(&args.host, args.port, admin_state, admin_api_key)
+        .await?;
 
     Ok(())
 }

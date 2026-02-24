@@ -1,13 +1,18 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        State, WebSocketUpgrade,
+        Request, State, WebSocketUpgrade,
     },
-    http::StatusCode,
-    response::IntoResponse,
+    http::{
+        header::{AUTHORIZATION, WWW_AUTHENTICATE},
+        HeaderValue, StatusCode,
+    },
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
@@ -48,6 +53,11 @@ pub struct GatewayServer {
     metrics_handle: PrometheusHandle,
 }
 
+#[derive(Clone)]
+struct AdminAuthState {
+    api_key: Arc<str>,
+}
+
 impl GatewayServer {
     pub fn new(
         config: Arc<NetworkConfig>,
@@ -77,6 +87,7 @@ impl GatewayServer {
         host: &str,
         port: u16,
         admin_state: Option<AdminState>,
+        admin_api_key: Option<String>,
     ) -> anyhow::Result<()> {
         let mut app = Router::new()
             .route("/", get(root_handler))
@@ -98,7 +109,20 @@ impl GatewayServer {
 
         // Add admin dashboard if enabled
         if let Some(admin) = admin_state {
-            app = app.nest("/admin", admin_router(admin));
+            let api_key = admin_api_key.ok_or_else(|| {
+                anyhow::anyhow!("admin_api_key must be set when admin_ui is enabled")
+            })?;
+            let auth_state = AdminAuthState {
+                api_key: Arc::<str>::from(api_key),
+            };
+
+            app = app.nest(
+                "/admin",
+                admin_router(admin).layer(middleware::from_fn_with_state(
+                    auth_state,
+                    admin_auth_middleware,
+                )),
+            );
         }
 
         let addr = format!("{}:{}", host, port);
@@ -109,6 +133,79 @@ impl GatewayServer {
         axum::serve(listener, app).await?;
         Ok(())
     }
+}
+
+async fn admin_auth_middleware(
+    State(state): State<AdminAuthState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if is_admin_authorized(&request, &state.api_key) {
+        return next.run(request).await;
+    }
+
+    admin_unauthorized_response()
+}
+
+fn is_admin_authorized(request: &Request, expected_key: &str) -> bool {
+    if let Some(provided_key) = request
+        .headers()
+        .get("x-admin-key")
+        .and_then(|v| v.to_str().ok())
+    {
+        if provided_key == expected_key {
+            return true;
+        }
+    }
+
+    if let Some(auth) = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = auth
+            .strip_prefix("Bearer ")
+            .or_else(|| auth.strip_prefix("bearer "))
+        {
+            if token == expected_key {
+                return true;
+            }
+        }
+
+        if let Some(encoded) = auth
+            .strip_prefix("Basic ")
+            .or_else(|| auth.strip_prefix("basic "))
+        {
+            if basic_password_matches(encoded, expected_key) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn basic_password_matches(encoded_credentials: &str, expected_key: &str) -> bool {
+    let Ok(decoded) = BASE64_STANDARD.decode(encoded_credentials) else {
+        return false;
+    };
+    let Ok(decoded_str) = std::str::from_utf8(&decoded) else {
+        return false;
+    };
+    let Some((_, password)) = decoded_str.split_once(':') else {
+        return false;
+    };
+
+    password == expected_key
+}
+
+fn admin_unauthorized_response() -> Response {
+    let mut response = StatusCode::UNAUTHORIZED.into_response();
+    response.headers_mut().insert(
+        WWW_AUTHENTICATE,
+        HeaderValue::from_static(r#"Basic realm="witness-admin", charset="UTF-8""#),
+    );
+    response
 }
 
 async fn health_handler() -> impl IntoResponse {

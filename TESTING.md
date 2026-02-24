@@ -139,7 +139,7 @@ cargo test --workspace
 - [ ] Invalid attestations are rejected
 - [ ] Threshold enforcement works
 - [ ] Duplicates return existing attestation
-- [ ] Admin dashboard loads (`--admin-ui` flag)
+- [ ] Admin dashboard loads (`--admin-ui --admin-api-key <key>`)
 
 ## Troubleshooting
 

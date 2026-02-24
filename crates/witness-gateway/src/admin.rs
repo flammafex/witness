@@ -263,7 +263,54 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
         }}
         h1 {{ font-size: 1.25rem; font-weight: 600; }}
         h1 span {{ color: var(--accent); }}
-        .meta {{ color: var(--text-dim); font-size: 0.875rem; }}
+        .meta {{
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }}
+        .meta-item {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.2rem 0.45rem;
+            border: 1px solid var(--border);
+            border-radius: 9999px;
+            background: var(--card-bg);
+        }}
+        .meta-label {{
+            color: var(--text-dim);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        .status-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }}
+        .last-refresh {{
+            color: var(--text-dim);
+            font-size: 0.75rem;
+        }}
+        .status-banner {{
+            padding: 0.35rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid rgba(251, 191, 36, 0.4);
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--warning);
+            font-size: 0.75rem;
+        }}
+        .status-banner.error {{
+            border-color: rgba(248, 113, 113, 0.4);
+            background: rgba(248, 113, 113, 0.1);
+            color: var(--error);
+        }}
+        .status-banner.hidden {{ display: none; }}
         .grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -306,11 +353,14 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
         }}
         .dot.online {{ background: var(--success); }}
         .dot.offline {{ background: var(--error); }}
+        .dot.warning {{ background: var(--warning); }}
         .dot.loading {{ background: var(--warning); animation: pulse 1s infinite; }}
         @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} }}
         .latency {{ color: var(--text-dim); font-size: 0.75rem; }}
+        .table-wrap {{ overflow-x: auto; }}
         table {{
             width: 100%;
+            min-width: 580px;
             border-collapse: collapse;
             font-size: 0.875rem;
         }}
@@ -367,6 +417,25 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
         }}
         .anchor .name {{ font-weight: 500; }}
         .anchor .info {{ color: var(--text-dim); font-size: 0.7rem; }}
+        @media (max-width: 760px) {{
+            body {{ padding: 0.75rem; }}
+            header {{
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }}
+            .meta {{ justify-content: flex-start; }}
+            .grid {{ grid-template-columns: 1fr; }}
+            .status-row {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+            table {{
+                min-width: 540px;
+                font-size: 0.8rem;
+            }}
+            th, td {{ padding: 0.6rem 0.5rem; }}
+        }}
         footer {{
             margin-top: 2rem;
             padding-top: 1rem;
@@ -382,11 +451,15 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
         <header>
             <h1>🙌 <span>Witness</span> Dashboard</h1>
             <div class="meta">
-                Network: <strong>{network_id}</strong> |
-                Scheme: <strong>{signature_scheme}</strong> |
-                Threshold: <strong>{threshold}/{witness_count}</strong>
+                <div class="meta-item"><span class="meta-label">Network</span> <strong>{network_id}</strong></div>
+                <div class="meta-item"><span class="meta-label">Scheme</span> <strong>{signature_scheme}</strong></div>
+                <div class="meta-item"><span class="meta-label">Threshold</span> <strong>{threshold}/{witness_count}</strong></div>
             </div>
         </header>
+        <div class="status-row">
+            <div class="last-refresh" id="last-refresh">Last refresh: pending</div>
+            <div class="status-banner hidden" id="status-banner"></div>
+        </div>
 
         <div class="grid">
             <div class="card">
@@ -423,19 +496,21 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
 
         <div class="card">
             <div class="section-title">Recent Attestations</div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Hash</th>
-                        <th>Sequence</th>
-                        <th>Signatures</th>
-                        <th>Time</th>
-                    </tr>
-                </thead>
-                <tbody id="recent">
-                    <tr><td colspan="4" style="text-align: center; color: var(--text-dim);">Loading...</td></tr>
-                </tbody>
-            </table>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Hash</th>
+                            <th>Sequence</th>
+                            <th>Signatures</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recent">
+                        <tr><td colspan="4" style="text-align: center; color: var(--text-dim);">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <footer>
@@ -444,9 +519,41 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
     </div>
 
     <script>
+        const sections = {{
+            stats: {{ label: 'stats', intervalMs: 10000, lastSuccessAt: null, error: null }},
+            witnesses: {{ label: 'witnesses', intervalMs: 30000, lastSuccessAt: null, error: null }},
+            recent: {{ label: 'recent attestations', intervalMs: 5000, lastSuccessAt: null, error: null }},
+            anchors: {{ label: 'anchors', intervalMs: 60000, lastSuccessAt: null, error: null }},
+        }};
+
         async function fetchJson(url) {{
             const resp = await fetch(url);
+            if (!resp.ok) {{
+                throw new Error(`${{resp.status}} ${{resp.statusText}}`.trim());
+            }}
             return resp.json();
+        }}
+
+        function escapeHtml(value) {{
+            return String(value).replace(/[&<>"']/g, (ch) => {{
+                switch (ch) {{
+                    case '&':
+                        return '&amp;';
+                    case '<':
+                        return '&lt;';
+                    case '>':
+                        return '&gt;';
+                    case '"':
+                        return '&quot;';
+                    default:
+                        return '&#39;';
+                }}
+            }});
+        }}
+
+        function shortHash(hash) {{
+            const prefixLength = window.innerWidth <= 700 ? 10 : 16;
+            return `${{hash.substring(0, prefixLength)}}...`;
         }}
 
         function copyHash(el) {{
@@ -456,8 +563,10 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
                 el.textContent = 'Copied!';
                 setTimeout(() => {{
                     el.classList.remove('copied');
-                    el.textContent = hash.substring(0, 16) + '...';
+                    el.textContent = shortHash(hash);
                 }}, 1000);
+            }}).catch(() => {{
+                el.classList.remove('copied');
             }});
         }}
 
@@ -470,6 +579,67 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
             return `${{m}}m`;
         }}
 
+        function markSuccess(sectionKey) {{
+            sections[sectionKey].lastSuccessAt = Date.now();
+            sections[sectionKey].error = null;
+            renderStatus();
+        }}
+
+        function markError(sectionKey, error) {{
+            const message = (error && error.message) ? error.message : String(error);
+            sections[sectionKey].error = message;
+            renderStatus();
+        }}
+
+        function renderStatus() {{
+            const lastRefresh = document.getElementById('last-refresh');
+            const banner = document.getElementById('status-banner');
+            const now = Date.now();
+            const values = Object.values(sections);
+
+            const successful = values
+                .map((section) => section.lastSuccessAt)
+                .filter((timestamp) => timestamp !== null);
+
+            if (successful.length === 0) {{
+                lastRefresh.textContent = 'Last refresh: pending';
+            }} else {{
+                const latest = Math.max(...successful);
+                lastRefresh.textContent = `Last refresh: ${{new Date(latest).toLocaleTimeString()}}`;
+            }}
+
+            const failed = values.filter((section) => section.error !== null).map((section) => section.label);
+            const stale = values
+                .filter((section) => section.lastSuccessAt !== null && (now - section.lastSuccessAt) > (section.intervalMs * 3))
+                .map((section) => section.label);
+
+            if (failed.length === 0 && stale.length === 0) {{
+                banner.className = 'status-banner hidden';
+                banner.textContent = '';
+                return;
+            }}
+
+            const parts = [];
+            if (failed.length > 0) parts.push(`failed: ${{failed.join(', ')}}`);
+            if (stale.length > 0) parts.push(`stale: ${{stale.join(', ')}}`);
+
+            banner.className = failed.length > 0 ? 'status-banner error' : 'status-banner';
+            banner.textContent = `Data may be stale (${{parts.join(' | ')}})`;
+        }}
+
+        function witnessStatusClass(status) {{
+            if (status === 'online') return 'online';
+            if (status && status.startsWith('error:')) return 'warning';
+            return 'offline';
+        }}
+
+        function witnessStatusText(witness) {{
+            if (witness.status === 'online') {{
+                return witness.latency_ms ? `${{witness.latency_ms}}ms` : 'online';
+            }}
+            return witness.status;
+        }}
+
         async function updateStats() {{
             try {{
                 const stats = await fetchJson('/admin/api/stats');
@@ -480,69 +650,110 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
                 document.getElementById('total-batches').textContent =
                     stats.total_batches.toLocaleString();
                 document.getElementById('uptime').textContent = formatUptime(stats.uptime_seconds);
+                markSuccess('stats');
             }} catch (e) {{
+                markError('stats', e);
                 console.error('Failed to fetch stats:', e);
             }}
         }}
 
         async function updateWitnesses() {{
+            const container = document.getElementById('witnesses');
             try {{
                 const witnesses = await fetchJson('/admin/api/witnesses');
-                const container = document.getElementById('witnesses');
-                container.innerHTML = witnesses.map(w => `
-                    <div class="witness">
-                        <span class="dot ${{w.status === 'online' ? 'online' : 'offline'}}"></span>
-                        <span>${{w.id}}</span>
-                        ${{w.latency_ms ? `<span class="latency">${{w.latency_ms}}ms</span>` : ''}}
+                if (witnesses.length === 0) {{
+                    container.innerHTML = '<div class="witness" style="color: var(--text-dim);">No witnesses configured</div>';
+                    container.dataset.loaded = 'true';
+                    markSuccess('witnesses');
+                    return;
+                }}
+
+                container.innerHTML = witnesses.map((w) => {{
+                    const statusClass = witnessStatusClass(w.status);
+                    const statusText = escapeHtml(witnessStatusText(w));
+                    return `
+                    <div class="witness" title="${{escapeHtml(w.endpoint)}}">
+                        <span class="dot ${{statusClass}}"></span>
+                        <span>${{escapeHtml(w.id)}}</span>
+                        <span class="latency">${{statusText}}</span>
                     </div>
-                `).join('');
+                `;
+                }}).join('');
+
+                container.dataset.loaded = 'true';
+                markSuccess('witnesses');
             }} catch (e) {{
+                markError('witnesses', e);
+                if (!container.dataset.loaded) {{
+                    container.innerHTML = '<div class="witness"><span class="dot warning"></span> Failed to load witness status</div>';
+                }}
                 console.error('Failed to fetch witnesses:', e);
             }}
         }}
 
         async function updateRecent() {{
+            const tbody = document.getElementById('recent');
             try {{
                 const recent = await fetchJson('/admin/api/recent');
-                const tbody = document.getElementById('recent');
                 if (recent.length === 0) {{
                     tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No attestations yet</td></tr>';
+                    tbody.dataset.loaded = 'true';
+                    markSuccess('recent');
                     return;
                 }}
-                tbody.innerHTML = recent.map(a => `
+
+                tbody.innerHTML = recent.map((a) => `
                     <tr>
-                        <td><span class="hash" data-hash="${{a.hash}}" onclick="copyHash(this)">${{a.hash.substring(0, 16)}}...</span></td>
+                        <td><span class="hash" data-hash="${{a.hash}}" onclick="copyHash(this)">${{shortHash(a.hash)}}</span></td>
                         <td>#${{a.sequence}}</td>
                         <td><span class="badge success">${{a.signature_count}} sigs</span></td>
-                        <td class="time-ago">${{a.time_ago}}</td>
+                        <td class="time-ago">${{escapeHtml(a.time_ago)}}</td>
                     </tr>
                 `).join('');
+
+                tbody.dataset.loaded = 'true';
+                markSuccess('recent');
             }} catch (e) {{
+                markError('recent', e);
+                if (!tbody.dataset.loaded) {{
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--error);">Failed to load recent attestations</td></tr>';
+                }}
                 console.error('Failed to fetch recent:', e);
             }}
         }}
 
         async function updateAnchors() {{
+            const container = document.getElementById('anchors');
             try {{
                 const anchors = await fetchJson('/admin/api/anchors');
-                const container = document.getElementById('anchors');
                 if (anchors.length === 0) {{
                     container.innerHTML = '<div class="anchor" style="color: var(--text-dim);">No external anchors configured</div>';
+                    container.dataset.loaded = 'true';
+                    markSuccess('anchors');
                     return;
                 }}
-                container.innerHTML = anchors.map(a => `
+
+                container.innerHTML = anchors.map((a) => `
                     <div class="anchor">
                         <span class="dot ${{a.enabled ? (a.last_anchor_time ? 'online' : 'loading') : 'offline'}}"></span>
-                        <span class="name">${{a.provider}}</span>
-                        <span class="info">${{a.last_anchor_ago ? 'Last: ' + a.last_anchor_ago : (a.enabled ? 'Pending' : 'Disabled')}}</span>
+                        <span class="name">${{escapeHtml(a.provider)}}</span>
+                        <span class="info">${{a.last_anchor_ago ? 'Last: ' + escapeHtml(a.last_anchor_ago) : (a.enabled ? 'Pending' : 'Disabled')}}</span>
                     </div>
                 `).join('');
+
+                container.dataset.loaded = 'true';
+                markSuccess('anchors');
             }} catch (e) {{
+                markError('anchors', e);
+                if (!container.dataset.loaded) {{
+                    container.innerHTML = '<div class="anchor" style="color: var(--error);">Failed to load anchors</div>';
+                }}
                 console.error('Failed to fetch anchors:', e);
             }}
         }}
 
         // Initial load
+        renderStatus();
         updateStats();
         updateWitnesses();
         updateRecent();
@@ -553,6 +764,14 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
         setInterval(updateWitnesses, 30000);
         setInterval(updateRecent, 5000);
         setInterval(updateAnchors, 60000);
+        setInterval(renderStatus, 5000);
+
+        // Re-render truncation when viewport changes.
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {{
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(updateRecent, 150);
+        }});
     </script>
 </body>
 </html>

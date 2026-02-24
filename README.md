@@ -96,7 +96,7 @@ witness config
 | `GET` | `/ws/events` | WebSocket for real-time attestation events |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics |
-| `GET` | `/admin` | Admin dashboard (if enabled) |
+| `GET` | `/admin` | Admin dashboard (if enabled and authenticated) |
 
 ### Timestamp Request
 
@@ -205,6 +205,31 @@ witness timestamp --file doc.pdf --freebird-acquire http://localhost:8081
 
 `FREEBIRD_CONSUME_TOKENS=false` switches to non-consuming `/v1/check` mode. This allows token reuse until expiry and should only be used for explicit proof-of-possession flows with strict rate limiting.
 
+### Admin Dashboard Auth
+
+Admin UI requires an API key when enabled:
+
+```bash
+# Option 1: CLI flag
+cargo run --release -p witness-gateway -- \
+  --config examples/network.json \
+  --port 8080 \
+  --admin-ui \
+  --admin-api-key "replace-with-random-secret"
+
+# Option 2: environment variable
+export WITNESS_ADMIN_API_KEY="replace-with-random-secret"
+cargo run --release -p witness-gateway -- \
+  --config examples/network.json \
+  --port 8080 \
+  --admin-ui
+```
+
+For browser access, use HTTP Basic Auth (`username: admin`, `password: <admin-api-key>`).  
+For API access, send either:
+- `Authorization: Bearer <admin-api-key>`
+- `X-Admin-Key: <admin-api-key>`
+
 ## Production Deployment
 
 ### Recommended Architecture
@@ -242,7 +267,7 @@ Each datacenter hosts witnesses from all networks—no single failure takes down
 - [ ] Federation with 2+ peer networks
 - [ ] External anchoring enabled
 - [ ] Database backups configured
-- [ ] Admin dashboard enabled (`--admin-ui`)
+- [ ] Admin dashboard enabled (`--admin-ui --admin-api-key ...`)
 
 ## Examples
 
