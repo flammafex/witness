@@ -46,6 +46,9 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }
 
+# Rate limiting
+governor = "0.8"
+
 # Utilities
 anyhow = "1.0"
 thiserror = "1.0"

@@ -108,9 +108,12 @@ impl FederationClient {
             batch: batch.clone(),
         };
 
-        let response = client
-            .post(&url)
-            .json(&request)
+        let mut req = client.post(&url).json(&request);
+        if let Some(ref token) = peer.auth_token {
+            req = req.bearer_auth(token);
+        }
+
+        let response = req
             .send()
             .await
             .with_context(|| format!("Failed to connect to peer network: {}", peer.id))?;

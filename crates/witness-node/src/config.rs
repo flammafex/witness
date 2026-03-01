@@ -32,6 +32,10 @@ pub struct WitnessNodeConfig {
     /// Bearer token required for /v1/sign requests
     pub signing_auth_token: String,
 
+    /// Previous signing auth token (accepted during rotation)
+    #[serde(default)]
+    pub previous_signing_auth_token: Option<String>,
+
     /// Maximum clock skew allowed (seconds)
     #[serde(default = "default_max_clock_skew")]
     pub max_clock_skew: u64,

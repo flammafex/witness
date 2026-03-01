@@ -59,6 +59,14 @@ pub struct FederationConfig {
     /// Minimum number of peer networks that must cross-anchor
     #[serde(default)]
     pub cross_anchor_threshold: usize,
+
+    /// Token that peers must present when calling our federation anchor endpoint
+    #[serde(default, skip_serializing)]
+    pub inbound_auth_token: Option<String>,
+
+    /// Previous inbound auth token (accepted during rotation)
+    #[serde(default, skip_serializing)]
+    pub previous_inbound_auth_token: Option<String>,
 }
 
 fn default_batch_period() -> u64 {
@@ -77,6 +85,10 @@ pub struct PeerNetworkInfo {
     /// Minimum number of witnesses required from this peer
     #[serde(default = "default_min_witnesses")]
     pub min_witnesses: usize,
+
+    /// Bearer token to send when calling this peer's federation endpoint
+    #[serde(default, skip_serializing)]
+    pub auth_token: Option<String>,
 }
 
 fn default_min_witnesses() -> usize {

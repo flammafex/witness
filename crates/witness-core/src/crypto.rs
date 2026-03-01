@@ -140,6 +140,20 @@ pub fn verify_signed_attestation(
     }
 }
 
+/// Constant-time string comparison to prevent timing attacks.
+/// Used for auth token and password comparisons.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut diff = 0u8;
+    for (a_byte, b_byte) in a.bytes().zip(b.bytes()) {
+        diff |= a_byte ^ b_byte;
+    }
+    diff == 0
+}
+
 /// Hash content using SHA-256
 pub fn hash_content(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();

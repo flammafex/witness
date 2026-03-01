@@ -1,10 +1,13 @@
 use axum::{
-    extract::State,
+    extract::{connect_info::ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
+use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use witness_core::{SignRequest, SignResponse, SignatureScheme};
 
@@ -13,12 +16,16 @@ use crate::config::WitnessNodeConfig;
 #[derive(Clone)]
 pub struct WitnessServer {
     config: Arc<WitnessNodeConfig>,
+    sign_rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
 }
 
 impl WitnessServer {
     pub fn new(config: WitnessNodeConfig) -> Self {
         Self {
             config: Arc::new(config),
+            sign_rate_limiter: Arc::new(RateLimiter::dashmap(
+                Quota::per_minute(NonZeroU32::new(60).unwrap()),
+            )),
         }
     }
 
@@ -34,7 +41,11 @@ impl WitnessServer {
 
         tracing::info!("Witness node listening on {}", addr);
 
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
         Ok(())
     }
 }
@@ -53,13 +64,31 @@ async fn info_handler(State(server): State<WitnessServer>) -> impl IntoResponse 
 
 async fn sign_handler(
     State(server): State<WitnessServer>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<SignRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // Per-IP rate limiting (defense-in-depth behind bearer auth)
+    if server.sign_rate_limiter.check_key(&addr.ip()).is_err() {
+        tracing::warn!("Sign rate limit exceeded for IP: {}", addr.ip());
+        return Err(AppError::RateLimited);
+    }
+
     let provided_token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
-    if !constant_time_eq(provided_token, &server.config.signing_auth_token) {
+    let current_matches =
+        witness_core::constant_time_eq(provided_token, &server.config.signing_auth_token);
+    let previous_matches = server
+        .config
+        .previous_signing_auth_token
+        .as_deref()
+        .is_some_and(|prev| witness_core::constant_time_eq(provided_token, prev));
+
+    if !current_matches && !previous_matches {
         tracing::warn!("Rejected unauthorized sign request");
         return Err(AppError::Unauthorized);
+    }
+    if previous_matches && !current_matches {
+        tracing::warn!("Sign request authenticated with previous token — rotate soon");
     }
 
     tracing::debug!("Received sign request: {}", request.attestation);
@@ -136,6 +165,7 @@ enum AppError {
     InvalidTimestamp,
     InvalidNetwork,
     InternalError,
+    RateLimited,
 }
 
 impl IntoResponse for AppError {
@@ -145,6 +175,7 @@ impl IntoResponse for AppError {
             AppError::InvalidTimestamp => (StatusCode::BAD_REQUEST, "Invalid timestamp"),
             AppError::InvalidNetwork => (StatusCode::BAD_REQUEST, "Invalid network ID"),
             AppError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error"),
+            AppError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
         };
 
         (status, Json(serde_json::json!({ "error": message }))).into_response()
@@ -159,14 +190,3 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     value.strip_prefix("Bearer ")
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-
-    let mut diff = 0u8;
-    for (a_byte, b_byte) in a.bytes().zip(b.bytes()) {
-        diff |= a_byte ^ b_byte;
-    }
-    diff == 0
-}

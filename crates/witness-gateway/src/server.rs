@@ -1,5 +1,6 @@
 use axum::{
     extract::{
+        connect_info::ConnectInfo,
         ws::{Message, WebSocket},
         Request, State, WebSocketUpgrade,
     },
@@ -14,7 +15,10 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
+use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
 use metrics_exporter_prometheus::PrometheusHandle;
+use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use witness_core::{
@@ -51,11 +55,14 @@ pub struct GatewayServer {
     freebird_client: Option<Arc<FreebirdClient>>,
     event_tx: broadcast::Sender<AttestationEvent>,
     metrics_handle: PrometheusHandle,
+    timestamp_rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    ws_auth_token: Option<Arc<str>>,
 }
 
 #[derive(Clone)]
 struct AdminAuthState {
     api_key: Arc<str>,
+    rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
 }
 
 impl GatewayServer {
@@ -66,6 +73,7 @@ impl GatewayServer {
         federation_client: Arc<FederationClient>,
         freebird_client: Option<Arc<FreebirdClient>>,
         metrics_handle: PrometheusHandle,
+        ws_auth_token: Option<String>,
     ) -> Self {
         // Create broadcast channel for WebSocket events with capacity 256
         let (event_tx, _) = broadcast::channel(256);
@@ -79,6 +87,10 @@ impl GatewayServer {
             freebird_client,
             event_tx,
             metrics_handle,
+            timestamp_rate_limiter: Arc::new(RateLimiter::dashmap(
+                Quota::per_minute(NonZeroU32::new(30).unwrap()),
+            )),
+            ws_auth_token: ws_auth_token.map(|t| Arc::<str>::from(t)),
         }
     }
 
@@ -114,6 +126,9 @@ impl GatewayServer {
             })?;
             let auth_state = AdminAuthState {
                 api_key: Arc::<str>::from(api_key),
+                rate_limiter: Arc::new(RateLimiter::dashmap(
+                    Quota::per_minute(NonZeroU32::new(5).unwrap()),
+                )),
             };
 
             app = app.nest(
@@ -130,16 +145,31 @@ impl GatewayServer {
 
         tracing::info!("Gateway listening on {}", addr);
 
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
         Ok(())
     }
 }
 
 async fn admin_auth_middleware(
     State(state): State<AdminAuthState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request,
     next: Next,
 ) -> Response {
+    // Check rate limit before auth to prevent brute-force
+    if state.rate_limiter.check_key(&addr.ip()).is_err() {
+        tracing::warn!("Admin auth rate limit exceeded for IP: {}", addr.ip());
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": "Too many requests" })),
+        )
+            .into_response();
+    }
+
     if is_admin_authorized(&request, &state.api_key) {
         return next.run(request).await;
     }
@@ -153,7 +183,7 @@ fn is_admin_authorized(request: &Request, expected_key: &str) -> bool {
         .get("x-admin-key")
         .and_then(|v| v.to_str().ok())
     {
-        if provided_key == expected_key {
+        if witness_core::constant_time_eq(provided_key, expected_key) {
             return true;
         }
     }
@@ -167,7 +197,7 @@ fn is_admin_authorized(request: &Request, expected_key: &str) -> bool {
             .strip_prefix("Bearer ")
             .or_else(|| auth.strip_prefix("bearer "))
         {
-            if token == expected_key {
+            if witness_core::constant_time_eq(token, expected_key) {
                 return true;
             }
         }
@@ -196,7 +226,7 @@ fn basic_password_matches(encoded_credentials: &str, expected_key: &str) -> bool
         return false;
     };
 
-    password == expected_key
+    witness_core::constant_time_eq(password, expected_key)
 }
 
 fn admin_unauthorized_response() -> Response {
@@ -222,9 +252,17 @@ async fn config_handler(State(server): State<GatewayServer>) -> impl IntoRespons
 
 async fn timestamp_handler(
     State(server): State<GatewayServer>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<TimestampRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let _timer = RequestTimer::new("timestamp");
+
+    // Per-IP rate limiting
+    if server.timestamp_rate_limiter.check_key(&addr.ip()).is_err() {
+        tracing::warn!("Timestamp rate limit exceeded for IP: {}", addr.ip());
+        return Err(AppError::RateLimited);
+    }
+
     tracing::info!("Received timestamp request for hash: {}", request.hash);
 
     // Check Freebird token if configured
@@ -470,8 +508,43 @@ async fn verify_handler(
 // Phase 2: Federation anchor handler
 async fn federation_anchor_handler(
     State(server): State<GatewayServer>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CrossAnchorRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // Check bearer token if inbound_auth_token is configured
+    if let Some(ref expected_token) = server.config.federation.inbound_auth_token {
+        let provided = headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "));
+
+        match provided {
+            Some(token)
+                if witness_core::constant_time_eq(token, expected_token)
+                    || server
+                        .config
+                        .federation
+                        .previous_inbound_auth_token
+                        .as_deref()
+                        .is_some_and(|prev| witness_core::constant_time_eq(token, prev)) =>
+            {
+                if server
+                    .config
+                    .federation
+                    .previous_inbound_auth_token
+                    .as_deref()
+                    .is_some_and(|prev| witness_core::constant_time_eq(token, prev))
+                {
+                    tracing::warn!("Federation request authenticated with previous token — rotate soon");
+                }
+            }
+            _ => {
+                tracing::warn!("Rejected unauthenticated federation anchor request");
+                return Err(AppError::Unauthorized);
+            }
+        }
+    }
+
     tracing::info!(
         "Received cross-anchor request from network: {}",
         request.batch.network_id
@@ -668,6 +741,8 @@ enum AppError {
     InvalidSignature,
     InsufficientSignatures { got: usize, required: usize },
     InternalError,
+    Unauthorized,
+    RateLimited,
     DatabaseError(sqlx::Error),
     Other(anyhow::Error),
     // Freebird errors
@@ -717,16 +792,25 @@ impl IntoResponse for AppError {
             AppError::InvalidSignature => {
                 (StatusCode::BAD_REQUEST, "Invalid signature".to_string())
             }
-            AppError::InsufficientSignatures { got, required } => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!(
+            AppError::InsufficientSignatures { got, required } => {
+                tracing::error!(
                     "Insufficient signatures: got {}, required {}",
-                    got, required
-                ),
-            ),
+                    got,
+                    required
+                );
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Service temporarily unavailable".to_string(),
+                )
+            }
             AppError::InternalError => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal error".to_string(),
+            ),
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many requests".to_string(),
             ),
             AppError::DatabaseError(e) => {
                 tracing::error!("Database error: {}", e);
@@ -755,7 +839,7 @@ impl IntoResponse for AppError {
                 tracing::error!("Freebird verification failed: {}", msg);
                 (
                     StatusCode::BAD_GATEWAY,
-                    format!("Freebird verification failed: {}", msg),
+                    "Freebird verification failed".to_string(),
                 )
             }
         };
@@ -770,9 +854,21 @@ impl IntoResponse for AppError {
 
 async fn ws_events_handler(
     ws: WebSocketUpgrade,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
     State(server): State<GatewayServer>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, server.event_tx.subscribe()))
+) -> Result<impl IntoResponse, AppError> {
+    // Check WebSocket auth token if configured
+    if let Some(ref expected_token) = server.ws_auth_token {
+        match params.get("token") {
+            Some(token) if witness_core::constant_time_eq(token, expected_token) => {}
+            _ => {
+                tracing::warn!("Rejected unauthenticated WebSocket connection");
+                return Err(AppError::Unauthorized);
+            }
+        }
+    }
+
+    Ok(ws.on_upgrade(move |socket| handle_ws_connection(socket, server.event_tx.subscribe())))
 }
 
 async fn handle_ws_connection(

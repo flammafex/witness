@@ -53,6 +53,10 @@ struct Args {
     /// Admin API key required to access /admin (or set WITNESS_ADMIN_API_KEY)
     #[arg(long, env = "WITNESS_ADMIN_API_KEY")]
     admin_api_key: Option<String>,
+
+    /// Token required for WebSocket connections (or set WITNESS_WS_AUTH_TOKEN)
+    #[arg(long, env = "WITNESS_WS_AUTH_TOKEN")]
+    ws_auth_token: Option<String>,
 }
 
 #[tokio::main]
@@ -202,6 +206,22 @@ async fn main() -> Result<()> {
         tracing::info!("Freebird disabled (no FREEBIRD_VERIFIER_URL set)");
     }
 
+    // Security startup warnings
+    if freebird_client.is_none() {
+        tracing::warn!(
+            "SECURITY: Freebird is disabled (no FREEBIRD_VERIFIER_URL). \
+             Timestamp endpoint has no proof-of-work/humanity protection."
+        );
+    }
+    if network_config.federation.enabled
+        && network_config.federation.inbound_auth_token.is_none()
+    {
+        tracing::warn!(
+            "SECURITY: Federation is enabled but inbound_auth_token is not set. \
+             Federation anchor endpoint accepts unauthenticated requests."
+        );
+    }
+
     // Start background metrics tasks
     let start_time = Instant::now();
 
@@ -237,6 +257,7 @@ async fn main() -> Result<()> {
         federation_client,
         freebird_client,
         metrics_handle,
+        args.ws_auth_token,
     );
     server
         .run(&args.host, args.port, admin_state, admin_api_key)
