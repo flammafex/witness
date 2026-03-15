@@ -18,25 +18,47 @@ pub async fn run(gateway_url: &str, file_path: &str, output_format: &str) -> Res
         println!();
     }
 
-    // Verify with gateway
+    // Fetch network config (contains public keys) for local verification
     let client = WitnessClient::new(gateway_url);
-    let result = client.verify(&attestation).await?;
+    let config = client.get_config().await?;
+
+    // Verify locally using witness-core cryptographic verification
+    let result = witness_core::verify_signed_attestation(&attestation, &config);
 
     // Output results
     match output_format {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            let (valid, verified_signatures, message) = match &result {
+                Ok(count) => (true, *count, format!(
+                    "Valid: {} of {} signatures verified, {} required",
+                    count, config.witnesses.len(), config.threshold
+                )),
+                Err(e) => (false, 0, format!("Invalid: {}", e)),
+            };
+            let response = serde_json::json!({
+                "valid": valid,
+                "verified_signatures": verified_signatures,
+                "required_signatures": config.threshold,
+                "message": message,
+            });
+            println!("{}", serde_json::to_string_pretty(&response)?);
         }
         "text" => {
-            if result.valid {
-                println!("✓ VALID");
-                println!();
-                println!("{}", result.message);
-            } else {
-                println!("✗ INVALID");
-                println!();
-                println!("{}", result.message);
-                std::process::exit(1);
+            match result {
+                Ok(count) => {
+                    println!("VALID");
+                    println!();
+                    println!(
+                        "{} of {} signatures verified, {} required",
+                        count, config.witnesses.len(), config.threshold
+                    );
+                }
+                Err(e) => {
+                    println!("INVALID");
+                    println!();
+                    println!("{}", e);
+                    std::process::exit(1);
+                }
             }
         }
         _ => {

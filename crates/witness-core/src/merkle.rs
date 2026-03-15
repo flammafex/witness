@@ -66,7 +66,11 @@ mod hex_bytes_vec {
     }
 }
 
-/// Simple Merkle tree implementation for batching attestations
+/// Simple Merkle tree implementation for batching attestations.
+///
+/// Uses domain separation to prevent second-preimage attacks:
+/// - Leaf nodes:     H(0x00 || data)
+/// - Internal nodes: H(0x01 || sorted(left, right))
 #[derive(Debug, Clone)]
 pub struct MerkleTree {
     leaves: Vec<[u8; 32]>,
@@ -74,18 +78,21 @@ pub struct MerkleTree {
 }
 
 impl MerkleTree {
+    const LEAF_PREFIX: u8 = 0x00;
+    const INTERNAL_PREFIX: u8 = 0x01;
+
     /// Create a new merkle tree from a list of hashes
-    pub fn new(mut leaves: Vec<[u8; 32]>) -> Self {
+    pub fn new(leaves: Vec<[u8; 32]>) -> Self {
         if leaves.is_empty() {
-            // Empty tree has a zero root
             return Self {
                 leaves: vec![],
                 root: [0u8; 32],
             };
         }
 
-        // Build the tree bottom-up
-        let root = Self::compute_root(&mut leaves);
+        // Hash leaves with domain separation, then build tree bottom-up
+        let hashed: Vec<[u8; 32]> = leaves.iter().map(|l| Self::hash_leaf(l)).collect();
+        let root = Self::compute_root(&hashed);
 
         Self { leaves, root }
     }
@@ -103,10 +110,10 @@ impl MerkleTree {
 
         let mut proof = Vec::new();
         let mut current_index = index;
-        let mut current_level = self.leaves.clone();
+        let mut current_level: Vec<[u8; 32]> =
+            self.leaves.iter().map(|l| Self::hash_leaf(l)).collect();
 
         while current_level.len() > 1 {
-            // Get sibling
             let sibling_index = if current_index % 2 == 0 {
                 current_index + 1
             } else {
@@ -117,7 +124,6 @@ impl MerkleTree {
                 proof.push(current_level[sibling_index]);
             }
 
-            // Move to next level
             current_level = Self::build_level(&current_level);
             current_index /= 2;
         }
@@ -127,18 +133,17 @@ impl MerkleTree {
 
     /// Verify a merkle proof
     pub fn verify_proof(leaf: [u8; 32], proof: &[[u8; 32]], root: [u8; 32]) -> bool {
-        let mut current = leaf;
+        let mut current = Self::hash_leaf(&leaf);
 
         for sibling in proof {
-            // Use sorted hash to be order-independent
-            current = Self::hash_sorted(&current, sibling);
+            current = Self::hash_internal(&current, sibling);
         }
 
         current == root
     }
 
-    fn compute_root(leaves: &mut Vec<[u8; 32]>) -> [u8; 32] {
-        let mut current_level = leaves.clone();
+    fn compute_root(hashed_leaves: &[[u8; 32]]) -> [u8; 32] {
+        let mut current_level = hashed_leaves.to_vec();
 
         while current_level.len() > 1 {
             current_level = Self::build_level(&current_level);
@@ -152,7 +157,7 @@ impl MerkleTree {
 
         for chunk in level.chunks(2) {
             let hash = if chunk.len() == 2 {
-                Self::hash_pair(&chunk[0], &chunk[1])
+                Self::hash_internal(&chunk[0], &chunk[1])
             } else {
                 // Odd number of nodes - promote the last one
                 chunk[0]
@@ -163,15 +168,19 @@ impl MerkleTree {
         next_level
     }
 
-    fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-        Self::hash_sorted(left, right)
+    fn hash_leaf(data: &[u8; 32]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update([Self::LEAF_PREFIX]);
+        hasher.update(data);
+        hasher.finalize().into()
     }
 
-    fn hash_sorted(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
+    fn hash_internal(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
         // Sort to ensure deterministic hashing regardless of order
         let (left, right) = if a <= b { (a, b) } else { (b, a) };
 
         let mut hasher = Sha256::new();
+        hasher.update([Self::INTERNAL_PREFIX]);
         hasher.update(left);
         hasher.update(right);
         hasher.finalize().into()
@@ -192,7 +201,13 @@ mod tests {
     fn test_single_leaf() {
         let leaf = [1u8; 32];
         let tree = MerkleTree::new(vec![leaf]);
-        assert_eq!(tree.root(), leaf);
+        // Root is hash_leaf(leaf), not the raw leaf (domain separation)
+        assert_ne!(tree.root(), leaf);
+        assert_ne!(tree.root(), [0u8; 32]);
+
+        // Same leaf produces same root
+        let tree2 = MerkleTree::new(vec![leaf]);
+        assert_eq!(tree.root(), tree2.root());
     }
 
     #[test]

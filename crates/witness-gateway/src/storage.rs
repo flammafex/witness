@@ -115,6 +115,18 @@ impl Storage {
         .execute(&self.pool)
         .await?;
 
+        // Sequence counter table for atomic sequence generation
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sequences (
+                network_id TEXT PRIMARY KEY,
+                next_val INTEGER NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Add batch_id column to attestations if it doesn't exist
         sqlx::query(
             r#"
@@ -296,19 +308,21 @@ impl Storage {
     }
 
     pub async fn get_next_sequence(&self, network_id: &str) -> Result<u64> {
+        // Atomic increment using INSERT ... ON CONFLICT to prevent race conditions.
+        // Two concurrent callers will serialize on the row lock and get distinct values.
         let row = sqlx::query(
             r#"
-            SELECT COALESCE(MAX(sequence), 0) as max_seq
-            FROM attestations
-            WHERE network_id = ?1
+            INSERT INTO sequences (network_id, next_val) VALUES (?1, 2)
+            ON CONFLICT(network_id) DO UPDATE SET next_val = next_val + 1
+            RETURNING next_val - 1 as seq
             "#,
         )
         .bind(network_id)
         .fetch_one(&self.pool)
         .await?;
 
-        let max_seq: i64 = row.get("max_seq");
-        Ok((max_seq + 1) as u64)
+        let seq: i64 = row.get("seq");
+        Ok(seq as u64)
     }
 
     pub async fn check_duplicate(&self, hash: &[u8; 32]) -> Result<bool> {
@@ -412,13 +426,16 @@ impl Storage {
         Ok(attestations)
     }
 
-    /// Store a batch and associate attestations with it
+    /// Store a batch and associate attestations with it.
+    /// Wrapped in a transaction so a crash mid-write can't leave orphaned batches
+    /// or unlinked attestations.
     pub async fn store_batch(
         &self,
         batch: &AttestationBatch,
         attestation_hashes: &[[u8; 32]],
     ) -> Result<i64> {
-        // Insert batch
+        let mut tx = self.pool.begin().await?;
+
         let result = sqlx::query(
             r#"
             INSERT INTO batches (network_id, merkle_root, period_start, period_end, attestation_count, created_at)
@@ -436,12 +453,11 @@ impl Storage {
                 .unwrap()
                 .as_secs() as i64,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         let batch_id = result.last_insert_rowid();
 
-        // Associate attestations with batch
         for (index, hash) in attestation_hashes.iter().enumerate() {
             let hash_hex = hex::encode(hash);
 
@@ -454,10 +470,9 @@ impl Storage {
             .bind(batch_id)
             .bind(&hash_hex)
             .bind(index as i64)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
-            // Update attestation with batch_id
             sqlx::query(
                 r#"
                 UPDATE attestations SET batch_id = ?1 WHERE hash = ?2
@@ -465,10 +480,11 @@ impl Storage {
             )
             .bind(batch_id)
             .bind(&hash_hex)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
 
+        tx.commit().await?;
         Ok(batch_id)
     }
 
@@ -1015,17 +1031,15 @@ mod tests {
         let seq = storage.get_next_sequence("test-network").await.unwrap();
         assert_eq!(seq, 1);
 
-        // Store some attestations
-        for i in 1..=5 {
-            let mut hash = [0u8; 32];
-            hash[0] = i;
-            let signed = create_test_attestation(hash, i as u64);
-            storage.store_attestation(&signed).await.unwrap();
+        // Subsequent calls return monotonically increasing values
+        for expected in 2..=6 {
+            let seq = storage.get_next_sequence("test-network").await.unwrap();
+            assert_eq!(seq, expected);
         }
 
-        // Next sequence should be 6
-        let seq = storage.get_next_sequence("test-network").await.unwrap();
-        assert_eq!(seq, 6);
+        // Different network has independent counter
+        let seq = storage.get_next_sequence("other-network").await.unwrap();
+        assert_eq!(seq, 1);
     }
 
     #[tokio::test]

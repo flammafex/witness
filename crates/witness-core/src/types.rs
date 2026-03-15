@@ -33,11 +33,17 @@ impl Attestation {
     }
 
     /// Get canonical bytes for signing
+    ///
+    /// Format: hash (32) || timestamp (8 LE) || network_id_len (4 LE) || network_id || sequence (8 LE)
+    ///
+    /// The length prefix on network_id prevents collisions between attestations
+    /// with different network_id/sequence pairs that could otherwise produce
+    /// identical byte representations.
     pub fn to_bytes(&self) -> Vec<u8> {
-        // Deterministic serialization for signing
-        let mut bytes = Vec::new();
+        let mut bytes = Vec::with_capacity(32 + 8 + 4 + self.network_id.len() + 8);
         bytes.extend_from_slice(&self.hash);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
+        bytes.extend_from_slice(&(self.network_id.len() as u32).to_le_bytes());
         bytes.extend_from_slice(self.network_id.as_bytes());
         bytes.extend_from_slice(&self.sequence.to_le_bytes());
         bytes

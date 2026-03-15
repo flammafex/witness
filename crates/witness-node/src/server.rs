@@ -68,12 +68,7 @@ async fn sign_handler(
     headers: HeaderMap,
     Json(request): Json<SignRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Per-IP rate limiting (defense-in-depth behind bearer auth)
-    if server.sign_rate_limiter.check_key(&addr.ip()).is_err() {
-        tracing::warn!("Sign rate limit exceeded for IP: {}", addr.ip());
-        return Err(AppError::RateLimited);
-    }
-
+    // Authenticate first so unauthenticated callers can't exhaust rate limits
     let provided_token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let current_matches =
         witness_core::constant_time_eq(provided_token, &server.config.signing_auth_token);
@@ -89,6 +84,12 @@ async fn sign_handler(
     }
     if previous_matches && !current_matches {
         tracing::warn!("Sign request authenticated with previous token — rotate soon");
+    }
+
+    // Per-IP rate limiting (defense-in-depth, after auth)
+    if server.sign_rate_limiter.check_key(&addr.ip()).is_err() {
+        tracing::warn!("Sign rate limit exceeded for IP: {}", addr.ip());
+        return Err(AppError::RateLimited);
     }
 
     tracing::debug!("Received sign request: {}", request.attestation);

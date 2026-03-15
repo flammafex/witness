@@ -511,37 +511,45 @@ async fn federation_anchor_handler(
     headers: axum::http::HeaderMap,
     Json(request): Json<CrossAnchorRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    // Check bearer token if inbound_auth_token is configured
-    if let Some(ref expected_token) = server.config.federation.inbound_auth_token {
-        let provided = headers
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "));
+    // Require inbound_auth_token — reject all federation requests if not configured
+    let expected_token = match &server.config.federation.inbound_auth_token {
+        Some(token) => token,
+        None => {
+            tracing::warn!(
+                "Rejected federation request: inbound_auth_token not configured"
+            );
+            return Err(AppError::Unauthorized);
+        }
+    };
 
-        match provided {
-            Some(token)
-                if witness_core::constant_time_eq(token, expected_token)
-                    || server
-                        .config
-                        .federation
-                        .previous_inbound_auth_token
-                        .as_deref()
-                        .is_some_and(|prev| witness_core::constant_time_eq(token, prev)) =>
-            {
-                if server
+    let provided = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    match provided {
+        Some(token)
+            if witness_core::constant_time_eq(token, expected_token)
+                || server
                     .config
                     .federation
                     .previous_inbound_auth_token
                     .as_deref()
-                    .is_some_and(|prev| witness_core::constant_time_eq(token, prev))
-                {
-                    tracing::warn!("Federation request authenticated with previous token — rotate soon");
-                }
+                    .is_some_and(|prev| witness_core::constant_time_eq(token, prev)) =>
+        {
+            if server
+                .config
+                .federation
+                .previous_inbound_auth_token
+                .as_deref()
+                .is_some_and(|prev| witness_core::constant_time_eq(token, prev))
+            {
+                tracing::warn!("Federation request authenticated with previous token — rotate soon");
             }
-            _ => {
-                tracing::warn!("Rejected unauthenticated federation anchor request");
-                return Err(AppError::Unauthorized);
-            }
+        }
+        _ => {
+            tracing::warn!("Rejected unauthenticated federation anchor request");
+            return Err(AppError::Unauthorized);
         }
     }
 

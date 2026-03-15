@@ -1,12 +1,10 @@
 mod client;
 mod commands;
-mod freebird_client;
-mod token_wallet;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use commands::{anchors, get, timestamp, token, verify};
+use commands::{anchors, get, timestamp, verify};
 
 #[derive(Parser)]
 #[command(name = "witness")]
@@ -44,30 +42,6 @@ enum Commands {
         /// Path to Freebird token JSON file
         #[arg(long)]
         freebird_token: Option<String>,
-
-        /// Base64-encoded Freebird token (alternative to --freebird-token)
-        #[arg(long, conflicts_with = "freebird_token")]
-        freebird_token_b64: Option<String>,
-
-        /// Freebird issuer ID (required with --freebird-token-b64)
-        #[arg(long, requires = "freebird_token_b64")]
-        freebird_issuer: Option<String>,
-
-        /// Freebird token expiration Unix timestamp (required with --freebird-token-b64)
-        #[arg(long, requires = "freebird_token_b64")]
-        freebird_exp: Option<u64>,
-
-        /// Freebird token epoch (required with --freebird-token-b64)
-        #[arg(long, requires = "freebird_token_b64")]
-        freebird_epoch: Option<u32>,
-
-        /// Freebird issuer URL to acquire token from (seamless flow)
-        #[arg(long, conflicts_with_all = ["freebird_token", "freebird_token_b64"])]
-        freebird_acquire: Option<String>,
-
-        /// Use a token from the wallet (auto-selects available token)
-        #[arg(long, conflicts_with_all = ["freebird_token", "freebird_token_b64", "freebird_acquire"])]
-        freebird_wallet: bool,
     },
 
     /// Get an existing timestamp by hash
@@ -102,35 +76,6 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         output: String,
     },
-
-    /// Manage Freebird token wallet
-    Token {
-        #[command(subcommand)]
-        action: TokenAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum TokenAction {
-    /// Fetch tokens from an issuer and store in wallet
-    Fetch {
-        /// Freebird issuer URL
-        #[arg(long)]
-        issuer: String,
-
-        /// Number of tokens to fetch
-        #[arg(long, default_value = "10")]
-        count: usize,
-    },
-
-    /// List tokens in the wallet
-    List,
-
-    /// Remove used and expired tokens
-    Cleanup,
-
-    /// Show wallet file path
-    Path,
 }
 
 #[tokio::main]
@@ -144,12 +89,6 @@ async fn main() -> Result<()> {
             output,
             save,
             freebird_token,
-            freebird_token_b64,
-            freebird_issuer,
-            freebird_exp,
-            freebird_epoch,
-            freebird_acquire,
-            freebird_wallet,
         } => {
             timestamp::run(
                 &cli.gateway,
@@ -158,12 +97,6 @@ async fn main() -> Result<()> {
                 &output,
                 save,
                 freebird_token,
-                freebird_token_b64,
-                freebird_issuer,
-                freebird_exp,
-                freebird_epoch,
-                freebird_acquire,
-                freebird_wallet,
             )
             .await?;
         }
@@ -181,20 +114,6 @@ async fn main() -> Result<()> {
         Commands::Anchors { hash, output } => {
             anchors::run(&cli.gateway, &hash, &output).await?;
         }
-        Commands::Token { action } => match action {
-            TokenAction::Fetch { issuer, count } => {
-                token::fetch(&issuer, count).await?;
-            }
-            TokenAction::List => {
-                token::list().await?;
-            }
-            TokenAction::Cleanup => {
-                token::cleanup().await?;
-            }
-            TokenAction::Path => {
-                token::path().await?;
-            }
-        },
     }
 
     Ok(())

@@ -3,7 +3,7 @@ use reqwest::Client;
 use std::time::Duration;
 use witness_core::{
     ExternalAnchorProof, FreebirdToken, NetworkConfig, SignedAttestation, TimestampRequest,
-    TimestampResponse, VerifyRequest, VerifyResponse,
+    TimestampResponse,
 };
 
 pub struct WitnessClient {
@@ -80,35 +80,6 @@ impl WitnessClient {
             .context("Failed to parse gateway response")?;
 
         Ok(timestamp_response.attestation)
-    }
-
-    pub async fn verify(&self, attestation: &SignedAttestation) -> Result<VerifyResponse> {
-        let url = format!("{}/v1/verify", self.gateway_url);
-
-        let request = VerifyRequest {
-            attestation: attestation.clone(),
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to connect to gateway")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Gateway returned error {}: {}", status, error_text);
-        }
-
-        let verify_response: VerifyResponse = response
-            .json()
-            .await
-            .context("Failed to parse gateway response")?;
-
-        Ok(verify_response)
     }
 
     pub async fn get_config(&self) -> Result<NetworkConfig> {
