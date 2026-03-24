@@ -1,9 +1,18 @@
 # Rust build artifacts
 /target/
 Cargo.lock
-#Mac artifacts
+
+# Mac artifacts
 .DS_Store
-#Witness artifacts
+
+# Runtime artifacts
 *.log
 *.pid
 *.db
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Local test configs (contain private keys)
+*-single.json
