@@ -27,6 +27,7 @@ ed25519-dalek.workspace = true
 blst.workspace = true
 governor.workspace = true
 anyhow.workspace = true
+zeroize = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true

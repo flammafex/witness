@@ -1,6 +1,5 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use thiserror::Error;
 use witness_core::{FreebirdConfig, FreebirdToken};
 
@@ -47,12 +46,10 @@ pub struct FreebirdClient {
 impl FreebirdClient {
     /// Create a new Freebird client from configuration
     pub fn new(config: FreebirdConfig) -> Self {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self { http, config }
+        Self {
+            http: crate::http_client::build_client(false),
+            config,
+        }
     }
 
     /// Create a client from environment variables
@@ -143,6 +140,10 @@ impl FreebirdClient {
         // - /v1/check: validates only (no consumption, token can be reused)
         let endpoint = if self.config.consume_tokens { "verify" } else { "check" };
         let url = format!("{}/v1/{}", verifier_url.trim_end_matches('/'), endpoint);
+
+        crate::http_client::validate_outbound_url(&url).map_err(|e| {
+            FreebirdError::VerificationFailed(format!("Freebird verifier URL blocked: {}", e))
+        })?;
 
         let response = self
             .http

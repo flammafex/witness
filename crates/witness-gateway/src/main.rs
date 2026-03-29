@@ -4,6 +4,7 @@ mod anchor_providers;
 mod batch_manager;
 mod federation_client;
 mod freebird;
+mod http_client;
 mod metrics;
 mod server;
 mod storage;

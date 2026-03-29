@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use witness_core::SignatureScheme;
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WitnessNodeConfig {
@@ -16,6 +17,7 @@ pub struct WitnessNodeConfig {
     pub signature_scheme: SignatureScheme,
 
     /// Private key (hex encoded) - Ed25519 (32 bytes) or BLS (32 bytes)
+    #[serde(skip_serializing)]
     pub private_key: String,
 
     /// HTTP port to listen on
@@ -30,15 +32,26 @@ pub struct WitnessNodeConfig {
     pub network_id: String,
 
     /// Bearer token required for /v1/sign requests
+    #[serde(skip_serializing)]
     pub signing_auth_token: String,
 
     /// Previous signing auth token (accepted during rotation)
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub previous_signing_auth_token: Option<String>,
 
     /// Maximum clock skew allowed (seconds)
     #[serde(default = "default_max_clock_skew")]
     pub max_clock_skew: u64,
+}
+
+impl Drop for WitnessNodeConfig {
+    fn drop(&mut self) {
+        self.private_key.zeroize();
+        self.signing_auth_token.zeroize();
+        if let Some(ref mut token) = self.previous_signing_auth_token {
+            token.zeroize();
+        }
+    }
 }
 
 fn default_port() -> u16 {

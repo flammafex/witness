@@ -19,3 +19,5 @@ sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 rand.workspace = true
+zeroize = { workspace = true }
+subtle = { workspace = true }

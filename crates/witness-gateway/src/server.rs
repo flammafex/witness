@@ -493,7 +493,8 @@ async fn verify_handler(
             }))
         }
         Err(e) => {
-            let message = format!("Invalid: {}", e);
+            tracing::debug!("Attestation verification failed: {}", e);
+            let message = "Signature verification failed".to_string();
 
             Ok(Json(VerifyResponse {
                 valid: false,

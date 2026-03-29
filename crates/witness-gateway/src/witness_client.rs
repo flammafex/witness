@@ -9,12 +9,9 @@ pub struct WitnessClient {
 
 impl WitnessClient {
     pub fn new() -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .expect("Failed to create HTTP client");
-
-        Self { client }
+        Self {
+            client: crate::http_client::build_client(true),
+        }
     }
 
     pub async fn request_signature(

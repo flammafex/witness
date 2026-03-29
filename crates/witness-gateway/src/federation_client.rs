@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::sync::Arc;
-use std::time::Duration;
 use witness_core::{
     AttestationBatch, CrossAnchor, CrossAnchorRequest, CrossAnchorResponse, NetworkConfig,
     PeerNetworkInfo,
@@ -19,15 +18,10 @@ pub struct FederationClient {
 
 impl FederationClient {
     pub fn new(config: Arc<NetworkConfig>, storage: Arc<Storage>) -> Self {
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client");
-
         Self {
             config,
             storage,
-            http_client,
+            http_client: crate::http_client::build_client(true),
         }
     }
 
@@ -103,6 +97,9 @@ impl FederationClient {
         batch: &AttestationBatch,
     ) -> Result<CrossAnchor> {
         let url = format!("{}/v1/federation/anchor", peer.gateway);
+
+        crate::http_client::validate_outbound_url(&url)
+            .map_err(|e| anyhow::anyhow!("Federation peer blocked (SSRF): {}", e))?;
 
         let request = CrossAnchorRequest {
             batch: batch.clone(),

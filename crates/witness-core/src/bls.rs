@@ -1,6 +1,8 @@
 use blst::min_sig::{AggregateSignature, PublicKey, SecretKey, Signature};
 use blst::BLST_ERROR;
+use rand::rngs::OsRng;
 use rand::RngCore;
+use zeroize::Zeroize;
 
 use crate::{Attestation, Result, WitnessError};
 
@@ -9,9 +11,10 @@ const DST: &[u8] = b"WITNESS_BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_";
 /// Generate a new BLS keypair
 pub fn generate_bls_keypair() -> (SecretKey, PublicKey) {
     let mut ikm = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut ikm);
+    OsRng.fill_bytes(&mut ikm);
 
     let secret_key = SecretKey::key_gen(&ikm, &[]).unwrap();
+    ikm.zeroize();
     let public_key = secret_key.sk_to_pk();
 
     (secret_key, public_key)

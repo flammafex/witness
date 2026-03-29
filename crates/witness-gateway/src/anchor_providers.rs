@@ -26,7 +26,7 @@ pub struct InternetArchiveProvider {
 impl InternetArchiveProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::http_client::build_client(false),
             base_url: "https://web.archive.org".to_string(),
         }
     }
@@ -156,6 +156,9 @@ pub struct EthereumProvider {
 
 impl EthereumProvider {
     pub async fn new(rpc_url: &str, private_key: &str) -> Result<Self> {
+        crate::http_client::validate_outbound_url(rpc_url)
+            .map_err(|e| anyhow::anyhow!("Ethereum RPC URL blocked (SSRF): {}", e))?;
+
         let provider = Provider::<Http>::try_from(rpc_url)?;
         let chain_id = provider.get_chainid().await?;
         

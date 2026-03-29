@@ -1,5 +1,9 @@
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePool, Row};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool},
+    Row,
+};
+use std::str::FromStr;
 use witness_core::{
     signature_scheme::AttestationSignatures, Attestation, AttestationBatch, CrossAnchor,
     ExternalAnchorProof, SignedAttestation, WitnessSignature,
@@ -11,160 +15,18 @@ pub struct Storage {
 
 impl Storage {
     pub async fn new(database_url: &str) -> Result<Self> {
-        let pool = SqlitePool::connect(database_url).await?;
+        let opts = SqliteConnectOptions::from_str(database_url)?
+            .journal_mode(SqliteJournalMode::Wal)
+            .create_if_missing(true);
+        let pool = SqlitePool::connect_with(opts).await?;
         Ok(Self { pool })
     }
 
     pub async fn migrate(&self) -> Result<()> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS attestations (
-                hash TEXT PRIMARY KEY,
-                timestamp INTEGER NOT NULL,
-                network_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL,
-                created_at INTEGER NOT NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS signatures (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hash TEXT NOT NULL,
-                witness_id TEXT NOT NULL,
-                signature BLOB NOT NULL,
-                FOREIGN KEY (hash) REFERENCES attestations(hash),
-                UNIQUE(hash, witness_id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_attestations_timestamp
-            ON attestations(timestamp DESC)
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Phase 2: Batch tables
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS batches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                network_id TEXT NOT NULL,
-                merkle_root BLOB NOT NULL,
-                period_start INTEGER NOT NULL,
-                period_end INTEGER NOT NULL,
-                attestation_count INTEGER NOT NULL,
-                created_at INTEGER NOT NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS batch_attestations (
-                batch_id INTEGER NOT NULL,
-                hash TEXT NOT NULL,
-                merkle_index INTEGER NOT NULL,
-                FOREIGN KEY (batch_id) REFERENCES batches(id),
-                FOREIGN KEY (hash) REFERENCES attestations(hash),
-                PRIMARY KEY (batch_id, hash)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS cross_anchors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                batch_id INTEGER NOT NULL,
-                witnessing_network TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                created_at INTEGER NOT NULL,
-                FOREIGN KEY (batch_id) REFERENCES batches(id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS cross_anchor_signatures (
-                cross_anchor_id INTEGER NOT NULL,
-                witness_id TEXT NOT NULL,
-                signature BLOB NOT NULL,
-                FOREIGN KEY (cross_anchor_id) REFERENCES cross_anchors(id),
-                PRIMARY KEY (cross_anchor_id, witness_id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Sequence counter table for atomic sequence generation
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS sequences (
-                network_id TEXT PRIMARY KEY,
-                next_val INTEGER NOT NULL DEFAULT 1
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Add batch_id column to attestations if it doesn't exist
-        sqlx::query(
-            r#"
-            ALTER TABLE attestations ADD COLUMN batch_id INTEGER
-            REFERENCES batches(id)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .ok(); // Ignore error if column already exists
-
-        // Phase 3: External anchor proofs
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS external_anchor_proofs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                batch_id INTEGER NOT NULL,
-                provider TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                proof_json TEXT NOT NULL,
-                anchored_data BLOB,
-                created_at INTEGER NOT NULL,
-                FOREIGN KEY (batch_id) REFERENCES batches(id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_external_anchors_batch
-            ON external_anchor_proofs(batch_id)
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::migrate!("./migrations")
+            .run(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Database migration failed: {}", e))?;
         Ok(())
     }
 
@@ -174,7 +36,7 @@ impl Storage {
         // Store attestation
         sqlx::query(
             r#"
-            INSERT OR REPLACE INTO attestations (hash, timestamp, network_id, sequence, created_at)
+            INSERT OR IGNORE INTO attestations (hash, timestamp, network_id, sequence, created_at)
             VALUES (?1, ?2, ?3, ?4, ?5)
             "#,
         )

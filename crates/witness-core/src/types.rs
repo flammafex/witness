@@ -184,6 +184,17 @@ impl NetworkConfig {
             });
         }
 
+        if self.signature_scheme == crate::signature_scheme::SignatureScheme::BLS {
+            for witness in &self.witnesses {
+                crate::decode_bls_public_key(&witness.pubkey).map_err(|e| {
+                    crate::WitnessError::InvalidPublicKey(format!(
+                        "Witness '{}': {}",
+                        witness.id, e
+                    ))
+                })?;
+            }
+        }
+
         Ok(())
     }
 

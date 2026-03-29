@@ -24,7 +24,7 @@ axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 reqwest.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["migrate"] }
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
