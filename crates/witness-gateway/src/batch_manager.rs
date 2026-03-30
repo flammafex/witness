@@ -4,6 +4,7 @@ use tokio::time;
 use witness_core::{AttestationBatch, MerkleTree, NetworkConfig};
 
 use crate::anchor_manager::AnchorManager;
+use crate::federation_client::FederationClient;
 use crate::metrics;
 use crate::storage::Storage;
 
@@ -13,6 +14,7 @@ pub struct BatchManager {
     storage: Arc<Storage>,
     last_batch_time: Arc<tokio::sync::Mutex<u64>>,
     anchor_manager: Option<Arc<AnchorManager>>,
+    federation_client: Option<Arc<FederationClient>>,
 }
 
 impl BatchManager {
@@ -27,12 +29,19 @@ impl BatchManager {
             storage,
             last_batch_time: Arc::new(tokio::sync::Mutex::new(now)),
             anchor_manager: None,
+            federation_client: None,
         }
     }
 
     /// Set the anchor manager (must be called before start)
     pub fn with_anchor_manager(mut self, anchor_manager: Arc<AnchorManager>) -> Self {
         self.anchor_manager = Some(anchor_manager);
+        self
+    }
+
+    /// Set the federation client for cross-anchoring (must be called before start)
+    pub fn with_federation_client(mut self, federation_client: Arc<FederationClient>) -> Self {
+        self.federation_client = Some(federation_client);
         self
     }
 
@@ -132,6 +141,17 @@ impl BatchManager {
         // Trigger external anchoring if enabled
         if let Some(anchor_manager) = &self.anchor_manager {
             anchor_manager.clone().anchor_batch_async(final_batch.clone());
+        }
+
+        // Trigger federation cross-anchoring if enabled
+        if let Some(federation_client) = &self.federation_client {
+            let fc = federation_client.clone();
+            let batch = final_batch.clone();
+            tokio::spawn(async move {
+                if let Err(e) = fc.cross_anchor_batch(&batch).await {
+                    tracing::error!("Cross-anchor failed for batch {}: {}", batch.id, e);
+                }
+            });
         }
 
         Ok(Some(final_batch))

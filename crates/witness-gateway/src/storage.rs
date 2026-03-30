@@ -27,7 +27,122 @@ impl Storage {
             .run(&self.pool)
             .await
             .map_err(|e| anyhow::anyhow!("Database migration failed: {}", e))?;
+        self.migrate_bls_legacy_rows().await?;
         Ok(())
+    }
+
+    /// One-time data migration: move legacy "BLS_AGGREGATED:a,b,c" rows from the
+    /// `signatures` table into the new `aggregated_signatures` / `aggregated_signers`
+    /// tables.  Safe to run repeatedly — uses INSERT OR IGNORE and only deletes rows
+    /// that were successfully moved.
+    async fn migrate_bls_legacy_rows(&self) -> Result<()> {
+        let rows = sqlx::query(
+            r#"
+            SELECT hash, witness_id, signature
+            FROM signatures
+            WHERE witness_id LIKE 'BLS_AGGREGATED:%'
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Migrating {} legacy BLS_AGGREGATED rows to dedicated tables",
+            rows.len()
+        );
+
+        for row in &rows {
+            let hash: String = row.get("hash");
+            let witness_id: String = row.get("witness_id");
+            let signature: Vec<u8> = row.get("signature");
+
+            let signers_str = witness_id
+                .strip_prefix("BLS_AGGREGATED:")
+                .unwrap_or_default();
+            let signers: Vec<&str> = signers_str.split(',').filter(|s| !s.is_empty()).collect();
+
+            let mut tx = self.pool.begin().await?;
+
+            sqlx::query(
+                r#"INSERT OR IGNORE INTO aggregated_signatures (hash, signature, scheme)
+                   VALUES (?1, ?2, 'bls')"#,
+            )
+            .bind(&hash)
+            .bind(&signature)
+            .execute(&mut *tx)
+            .await?;
+
+            for (position, signer) in signers.iter().enumerate() {
+                sqlx::query(
+                    r#"INSERT OR IGNORE INTO aggregated_signers (hash, witness_id, position)
+                       VALUES (?1, ?2, ?3)"#,
+                )
+                .bind(&hash)
+                .bind(signer)
+                .bind(position as i64)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            sqlx::query(
+                r#"DELETE FROM signatures WHERE hash = ?1 AND witness_id LIKE 'BLS_AGGREGATED:%'"#,
+            )
+            .bind(&hash)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+        }
+
+        tracing::info!("BLS legacy row migration complete");
+        Ok(())
+    }
+
+    /// Read signatures for a hash — checks the aggregated tables first, falls back to
+    /// the multi-sig `signatures` table.
+    async fn read_signatures(&self, hash_hex: &str) -> Result<AttestationSignatures> {
+        let agg_row = sqlx::query(
+            r#"SELECT signature FROM aggregated_signatures WHERE hash = ?1"#,
+        )
+        .bind(hash_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(agg_row) = agg_row {
+            let signature: Vec<u8> = agg_row.get("signature");
+            let signer_rows = sqlx::query(
+                r#"SELECT witness_id FROM aggregated_signers
+                   WHERE hash = ?1 ORDER BY position ASC"#,
+            )
+            .bind(hash_hex)
+            .fetch_all(&self.pool)
+            .await?;
+            let signers: Vec<String> = signer_rows.iter().map(|r| r.get("witness_id")).collect();
+            return Ok(AttestationSignatures::Aggregated { signature, signers });
+        }
+
+        let sig_rows = sqlx::query(
+            r#"SELECT witness_id, signature FROM signatures WHERE hash = ?1"#,
+        )
+        .bind(hash_hex)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let witness_sigs: Vec<WitnessSignature> = sig_rows
+            .iter()
+            .map(|row| WitnessSignature {
+                witness_id: row.get("witness_id"),
+                signature: row.get("signature"),
+            })
+            .collect();
+
+        Ok(AttestationSignatures::MultiSig {
+            signatures: witness_sigs,
+        })
     }
 
     pub async fn store_attestation(&self, signed: &SignedAttestation) -> Result<()> {
@@ -72,20 +187,26 @@ impl Storage {
                 }
             }
             AttestationSignatures::Aggregated { signature, signers } => {
-                // Store aggregated signature with signers list as witness_id
-                // Format: "BLS_AGGREGATED:signer1,signer2,signer3"
-                let witness_id = format!("BLS_AGGREGATED:{}", signers.join(","));
                 sqlx::query(
-                    r#"
-                    INSERT OR IGNORE INTO signatures (hash, witness_id, signature)
-                    VALUES (?1, ?2, ?3)
-                    "#,
+                    r#"INSERT OR IGNORE INTO aggregated_signatures (hash, signature, scheme)
+                       VALUES (?1, ?2, 'bls')"#,
                 )
                 .bind(&hash_hex)
-                .bind(&witness_id)
                 .bind(signature)
                 .execute(&self.pool)
                 .await?;
+
+                for (position, signer) in signers.iter().enumerate() {
+                    sqlx::query(
+                        r#"INSERT OR IGNORE INTO aggregated_signers (hash, witness_id, position)
+                           VALUES (?1, ?2, ?3)"#,
+                    )
+                    .bind(&hash_hex)
+                    .bind(signer)
+                    .bind(position as i64)
+                    .execute(&self.pool)
+                    .await?;
+                }
             }
         }
 
@@ -122,46 +243,7 @@ impl Storage {
             sequence: row.get::<i64, _>("sequence") as u64,
         };
 
-        // Get signatures
-        let sig_rows = sqlx::query(
-            r#"
-            SELECT witness_id, signature
-            FROM signatures
-            WHERE hash = ?1
-            "#,
-        )
-        .bind(&hash_hex)
-        .fetch_all(&self.pool)
-        .await?;
-
-        if sig_rows.is_empty() {
-            return Ok(None);
-        }
-
-        // Check if this is an aggregated signature
-        let first_witness_id: String = sig_rows[0].get("witness_id");
-
-        let signatures = if first_witness_id.starts_with("BLS_AGGREGATED:") {
-            // Reconstruct aggregated signature
-            let signature: Vec<u8> = sig_rows[0].get("signature");
-            let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
-            let signers: Vec<String> = signers_str.split(',').map(|s| s.to_string()).collect();
-
-            AttestationSignatures::Aggregated { signature, signers }
-        } else {
-            // Reconstruct multi-sig
-            let witness_sigs: Vec<WitnessSignature> = sig_rows
-                .iter()
-                .map(|row| WitnessSignature {
-                    witness_id: row.get("witness_id"),
-                    signature: row.get("signature"),
-                })
-                .collect();
-
-            AttestationSignatures::MultiSig {
-                signatures: witness_sigs,
-            }
-        };
+        let signatures = self.read_signatures(&hash_hex).await?;
 
         Ok(Some(SignedAttestation {
             attestation,
@@ -235,49 +317,7 @@ impl Storage {
                 sequence: row.get::<i64, _>("sequence") as u64,
             };
 
-            // Get signatures
-            let sig_rows = sqlx::query(
-                r#"
-                SELECT witness_id, signature
-                FROM signatures
-                WHERE hash = ?1
-                "#,
-            )
-            .bind(&hash_str)
-            .fetch_all(&self.pool)
-            .await?;
-
-            // Reconstruct signatures based on type
-            let signatures = if !sig_rows.is_empty() {
-                let first_witness_id: String = sig_rows[0].get("witness_id");
-
-                if first_witness_id.starts_with("BLS_AGGREGATED:") {
-                    // Aggregated signature
-                    let signature: Vec<u8> = sig_rows[0].get("signature");
-                    let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
-                    let signers: Vec<String> =
-                        signers_str.split(',').map(|s| s.to_string()).collect();
-
-                    AttestationSignatures::Aggregated { signature, signers }
-                } else {
-                    // Multi-sig
-                    let witness_sigs: Vec<WitnessSignature> = sig_rows
-                        .iter()
-                        .map(|row| WitnessSignature {
-                            witness_id: row.get("witness_id"),
-                            signature: row.get("signature"),
-                        })
-                        .collect();
-
-                    AttestationSignatures::MultiSig {
-                        signatures: witness_sigs,
-                    }
-                }
-            } else {
-                AttestationSignatures::MultiSig {
-                    signatures: Vec::new(),
-                }
-            };
+            let signatures = self.read_signatures(&hash_str).await?;
 
             attestations.push(SignedAttestation {
                 attestation,
@@ -694,46 +734,7 @@ impl Storage {
                 sequence: row.get::<i64, _>("sequence") as u64,
             };
 
-            // Get signatures
-            let sig_rows = sqlx::query(
-                r#"
-                SELECT witness_id, signature
-                FROM signatures
-                WHERE hash = ?1
-                "#,
-            )
-            .bind(&hash_str)
-            .fetch_all(&self.pool)
-            .await?;
-
-            let signatures = if !sig_rows.is_empty() {
-                let first_witness_id: String = sig_rows[0].get("witness_id");
-
-                if first_witness_id.starts_with("BLS_AGGREGATED:") {
-                    let signature: Vec<u8> = sig_rows[0].get("signature");
-                    let signers_str = first_witness_id.strip_prefix("BLS_AGGREGATED:").unwrap();
-                    let signers: Vec<String> =
-                        signers_str.split(',').map(|s| s.to_string()).collect();
-
-                    AttestationSignatures::Aggregated { signature, signers }
-                } else {
-                    let witness_sigs: Vec<WitnessSignature> = sig_rows
-                        .iter()
-                        .map(|row| WitnessSignature {
-                            witness_id: row.get("witness_id"),
-                            signature: row.get("signature"),
-                        })
-                        .collect();
-
-                    AttestationSignatures::MultiSig {
-                        signatures: witness_sigs,
-                    }
-                }
-            } else {
-                AttestationSignatures::MultiSig {
-                    signatures: Vec::new(),
-                }
-            };
+            let signatures = self.read_signatures(&hash_str).await?;
 
             attestations.push(SignedAttestation {
                 attestation,

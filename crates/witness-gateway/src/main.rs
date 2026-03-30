@@ -2,12 +2,15 @@ mod admin;
 mod anchor_manager;
 mod anchor_providers;
 mod batch_manager;
+mod error;
 mod federation_client;
 mod freebird;
 mod http_client;
 mod metrics;
+mod real_ip;
 mod server;
 mod storage;
+mod traits;
 mod witness_client;
 
 use anyhow::Result;
@@ -58,6 +61,14 @@ struct Args {
     /// Token required for WebSocket connections (or set WITNESS_WS_AUTH_TOKEN)
     #[arg(long, env = "WITNESS_WS_AUTH_TOKEN")]
     ws_auth_token: Option<String>,
+
+    /// Bearer token required to access /metrics (or set WITNESS_METRICS_TOKEN)
+    #[arg(long, env = "WITNESS_METRICS_TOKEN")]
+    metrics_token: Option<String>,
+
+    /// Trust X-Forwarded-For header for real client IP (set when behind a reverse proxy)
+    #[arg(long, env = "WITNESS_BEHIND_PROXY", default_value = "false")]
+    behind_proxy: bool,
 }
 
 #[tokio::main]
@@ -143,17 +154,18 @@ async fn main() -> Result<()> {
     let anchor_manager =
         Arc::new(AnchorManager::new(network_config.clone(), storage.clone()).await);
 
-    // Initialize batch manager (Phase 2) with anchor manager
-    let batch_manager = Arc::new(
-        BatchManager::new(network_config.clone(), storage.clone())
-            .with_anchor_manager(anchor_manager.clone()),
-    );
-
     // Initialize federation client (Phase 2)
     let federation_client = Arc::new(FederationClient::new(
         network_config.clone(),
         storage.clone(),
     ));
+
+    // Initialize batch manager (Phase 2) with anchor manager and federation client
+    let batch_manager = Arc::new(
+        BatchManager::new(network_config.clone(), storage.clone())
+            .with_anchor_manager(anchor_manager.clone())
+            .with_federation_client(federation_client.clone()),
+    );
 
     // Start batch manager background task
     batch_manager.clone().start();
@@ -254,11 +266,11 @@ async fn main() -> Result<()> {
     let server = GatewayServer::new(
         network_config,
         storage,
-        batch_manager,
-        federation_client,
         freebird_client,
         metrics_handle,
         args.ws_auth_token,
+        args.metrics_token,
+        args.behind_proxy,
     );
     server
         .run(&args.host, args.port, admin_state, admin_api_key)
