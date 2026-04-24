@@ -1,0 +1,50 @@
+name: Release Binaries
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: |
+          docker build --target witness-node    -t witness-node-build .
+          docker build --target witness-gateway -t witness-gateway-build .
+
+      - name: Extract binaries
+        run: |
+          docker create --name node-tmp witness-node-build
+          docker cp node-tmp:/usr/local/bin/witness-node ./witness-node-linux-amd64
+          docker rm node-tmp
+
+          docker create --name gateway-tmp witness-gateway-build
+          docker cp gateway-tmp:/usr/local/bin/witness-gateway ./witness-gateway-linux-amd64
+          docker cp gateway-tmp:/usr/local/bin/witness         ./witness-cli-linux-amd64
+          docker rm gateway-tmp
+
+          chmod +x witness-*-linux-amd64
+
+      - name: Create Forgejo release
+        id: release
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases" \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"${{ github.ref_name }}\",\"name\":\"${{ github.ref_name }}\",\"draft\":false,\"prerelease\":false}")
+          echo "release_id=$(echo "$RESPONSE" | jq -r '.id')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload binaries
+        run: |
+          RELEASE_ID="${{ steps.release.outputs.release_id }}"
+          for binary in witness-node-linux-amd64 witness-gateway-linux-amd64 witness-cli-linux-amd64; do
+            curl -s -X POST \
+              "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases/${RELEASE_ID}/assets?name=${binary}" \
+              -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+              -F "attachment=@${binary}"
+          done

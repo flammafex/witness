@@ -1,0 +1,54 @@
+name: Build & Push Docker Images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  IMAGE_PREFIX: git.carpocratian.org/sibyl/witness
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        target: [witness-node, witness-gateway]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Forgejo registry
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.carpocratian.org -u ${{ github.actor }} --password-stdin
+
+      - name: Compute tags
+        id: tags
+        run: |
+          IMAGE="${{ env.IMAGE_PREFIX }}-${{ matrix.target }}"
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          REF="${{ github.ref }}"
+          TAGS="${IMAGE}:${SHA}"
+          if [ "$REF" = "refs/heads/main" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          if echo "$REF" | grep -q '^refs/tags/v'; then
+            VERSION="${REF#refs/tags/v}"
+            TAGS="${TAGS},${IMAGE}:${VERSION}"
+            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+            TAGS="${TAGS},${IMAGE}:${MAJOR_MINOR}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        run: |
+          IFS=',' read -ra TAG_LIST <<< "${{ steps.tags.outputs.tags }}"
+          TAG_ARGS=""
+          for t in "${TAG_LIST[@]}"; do
+            TAG_ARGS="$TAG_ARGS -t $t"
+          done
+          docker build $TAG_ARGS --target ${{ matrix.target }} .
+          for t in "${TAG_LIST[@]}"; do
+            docker push "$t"
+          done
