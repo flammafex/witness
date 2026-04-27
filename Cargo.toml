@@ -5,6 +5,7 @@ members = [
     "crates/witness-node",
     "crates/witness-gateway",
     "crates/witness-cli",
+    "crates/witness-auditor",
 ]
 
 [workspace.package]
