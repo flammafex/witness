@@ -23,9 +23,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use witness_core::{
-    Attestation, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof, MerkleTree,
-    NetworkConfig, SignatureScheme, SignResponse, SignedAttestation, TimestampRequest,
-    TimestampResponse, VerifyRequest, VerifyResponse, WitnessInfo,
+    merkle::{consistency_path, inclusion_path},
+    Attestation, BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
+    LogConsistencyProof, MerkleTree, NetworkConfig, ProofBundle, SignResponse, SignatureScheme,
+    SignedAttestation, SignedTreeHead, TimestampRequest, TimestampResponse, VerifyRequest,
+    VerifyResponse, WitnessInfo,
 };
 
 use crate::admin::{admin_router, AdminState};
@@ -166,9 +168,9 @@ impl GatewayServer {
             witness_client: witness_client.clone(),
             freebird_client: self.freebird_client.clone(),
             event_tx: event_tx.clone(),
-            rate_limiter: Arc::new(RateLimiter::dashmap(
-                Quota::per_minute(NonZeroU32::new(30).unwrap()),
-            )),
+            rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
+                NonZeroU32::new(30).unwrap(),
+            ))),
             behind_proxy: self.behind_proxy,
         };
 
@@ -176,9 +178,9 @@ impl GatewayServer {
             config: self.config.clone(),
             storage: self.storage.clone(),
             witness_client: witness_client.clone(),
-            rate_limiter: Arc::new(RateLimiter::dashmap(
-                Quota::per_minute(NonZeroU32::new(10).unwrap()),
-            )),
+            rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
+                NonZeroU32::new(10).unwrap(),
+            ))),
             behind_proxy: self.behind_proxy,
         };
 
@@ -193,10 +195,16 @@ impl GatewayServer {
             .route("/", get(root_handler))
             .route("/health", get(health_handler))
             .route("/v1/config", get(config_handler))
+            .route("/v1/network", get(network_config_handler))
             .route("/v1/timestamp/:hash", get(get_timestamp_handler))
             .route("/v1/verify", post(verify_handler))
             .route("/v1/anchors/:hash", get(get_anchors_handler))
             .route("/v1/proof/:hash", get(get_proof_handler))
+            .route("/v1/bundle/:hash", get(get_proof_bundle_handler))
+            .route("/v1/log/sth", get(get_latest_sth_handler))
+            .route("/v1/log/sth/:tree_size", get(get_sth_at_size_handler))
+            .route("/v1/log/consistency", get(get_consistency_handler))
+            .route("/v1/log/proof", get(get_log_proof_handler))
             .route("/ws/events", get(ws_events_handler))
             .with_state(core_state)
             .merge(
@@ -221,9 +229,9 @@ impl GatewayServer {
             })?;
             let auth_state = AdminAuthState {
                 api_key: Arc::<str>::from(api_key),
-                rate_limiter: Arc::new(RateLimiter::dashmap(
-                    Quota::per_minute(NonZeroU32::new(5).unwrap()),
-                )),
+                rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
+                    NonZeroU32::new(5).unwrap(),
+                ))),
                 behind_proxy,
             };
 
@@ -348,7 +356,7 @@ fn admin_unauthorized_response() -> Response {
 /// Request signatures from all witnesses concurrently, stopping as soon as
 /// `threshold` successful responses have been received. Tasks for the
 /// remaining witnesses are cancelled via `JoinSet::abort_all`.
-async fn collect_signatures_until_threshold(
+pub(crate) async fn collect_signatures_until_threshold(
     witnesses: &[WitnessInfo],
     attestation: &Attestation,
     client: &Arc<WitnessClient>,
@@ -410,6 +418,14 @@ async fn config_handler(State(state): State<CoreState>) -> impl IntoResponse {
         signature_scheme: state.config.signature_scheme,
         witness_count: state.config.witnesses.len(),
     })
+}
+
+/// Return the full [`NetworkConfig`] (witnesses, threshold, signature scheme,
+/// federation peers, external anchor providers) for offline verification of
+/// proof bundles.  Auth tokens are omitted via `#[serde(skip_serializing)]`
+/// on the relevant fields.
+async fn network_config_handler(State(state): State<CoreState>) -> impl IntoResponse {
+    Json((*state.config).clone())
 }
 
 async fn get_timestamp_handler(
@@ -527,15 +543,207 @@ async fn get_proof_handler(
 
     let tree = MerkleTree::new(batch_hashes);
     let proof = tree
-        .proof(merkle_index)
+        .inclusion_proof(merkle_index)
         .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))?;
 
     Ok(Json(ProofResponse {
         hash,
-        proof: proof.iter().map(hex::encode).collect(),
+        proof: proof.siblings.iter().map(hex::encode).collect(),
         index: merkle_index,
         merkle_root: hex::encode(merkle_root),
         batch_id: batch_id as u64,
+    }))
+}
+
+/// Return a self-contained [`ProofBundle`] for a hash.
+///
+/// The bundle includes the home network's threshold-signed attestation,
+/// merkle inclusion proof (if batched), peer cross-anchors, and external
+/// anchor proofs.  Clients can verify the bundle offline against the
+/// network configurations using [`witness_core::verify_proof_bundle`].
+async fn get_proof_bundle_handler(
+    State(state): State<CoreState>,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::debug!("Building proof bundle for hash: {}", hash);
+
+    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
+    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+
+    let signed_attestation = state
+        .storage
+        .get_attestation(&hash_array)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let mut batch_inclusion = None;
+    let mut cross_anchors = Vec::new();
+    let mut external_anchors = Vec::new();
+
+    if let Some((batch_id, merkle_index, merkle_root)) =
+        state.storage.get_attestation_batch_info(&hash).await?
+    {
+        let batch = state
+            .storage
+            .get_batch(batch_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+
+        let batch_hashes = state.storage.get_batch_attestation_hashes(batch_id).await?;
+        let tree = MerkleTree::new(batch_hashes);
+        let mut merkle_proof = tree
+            .inclusion_proof(merkle_index)
+            .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))?;
+        // The on-disk merkle_root is authoritative; copy it onto the proof so
+        // verifiers don't depend on whatever the in-memory tree just computed.
+        merkle_proof.root = merkle_root;
+
+        batch_inclusion = Some(BatchInclusion {
+            batch: batch.clone(),
+            merkle_proof,
+        });
+
+        cross_anchors = state.storage.get_cross_anchors(batch_id).await?;
+        external_anchors = state.storage.get_anchor_proofs(batch_id as u64).await?;
+    }
+
+    Ok(Json(ProofBundle {
+        signed_attestation,
+        batch_inclusion,
+        cross_anchors,
+        external_anchors,
+    }))
+}
+
+// ============================================================================
+// RFC 9162 Certificate Transparency v2 endpoints
+// ============================================================================
+
+/// Latest signed tree head for the gateway's home network.  Returns 404 if
+/// no batches have closed yet (the log is empty).
+async fn get_latest_sth_handler(
+    State(state): State<CoreState>,
+) -> Result<impl IntoResponse, AppError> {
+    let sth = state
+        .storage
+        .get_latest_sth(&state.config.id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(sth))
+}
+
+/// Look up a historical STH at a specific tree size.  Auditors use this to
+/// pin a known-good snapshot and walk forward via consistency proofs.
+async fn get_sth_at_size_handler(
+    State(state): State<CoreState>,
+    axum::extract::Path(tree_size): axum::extract::Path<u64>,
+) -> Result<impl IntoResponse, AppError> {
+    let sth = state
+        .storage
+        .get_sth(&state.config.id, tree_size)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(sth))
+}
+
+#[derive(serde::Deserialize)]
+struct ConsistencyQuery {
+    first: u64,
+    second: u64,
+}
+
+/// RFC 9162 §4.10 GetConsistency: prove that the log of size `first` is a
+/// prefix of the log of size `second`.  Both endpoints are inclusive — they
+/// must each correspond to a previously published STH.
+async fn get_consistency_handler(
+    State(state): State<CoreState>,
+    axum::extract::Query(q): axum::extract::Query<ConsistencyQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    if q.first == 0 || q.first > q.second {
+        return Err(AppError::InvalidHash);
+    }
+
+    let old_sth = state
+        .storage
+        .get_sth(&state.config.id, q.first)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let new_sth = state
+        .storage
+        .get_sth(&state.config.id, q.second)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let mut leaves = state.storage.get_log_leaves(&state.config.id).await?;
+    if (leaves.len() as u64) < q.second {
+        return Err(AppError::InternalError);
+    }
+    leaves.truncate(q.second as usize);
+
+    let hashes = consistency_path(q.first as usize, &leaves)
+        .ok_or_else(|| AppError::Other(anyhow::anyhow!("invalid consistency proof bounds")))?;
+
+    Ok(Json(LogConsistencyProof {
+        old_sth,
+        new_sth,
+        hashes,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct LogProofQuery {
+    hash: String,
+    tree_size: u64,
+}
+
+#[derive(serde::Serialize)]
+struct LogInclusionProofResponse {
+    leaf_index: u64,
+    tree_size: u64,
+    audit_path: Vec<String>,
+    sth: SignedTreeHead,
+}
+
+/// RFC 9162 §4.11 GetProofByHash: inclusion proof for `hash` against the
+/// STH at `tree_size`.
+async fn get_log_proof_handler(
+    State(state): State<CoreState>,
+    axum::extract::Query(q): axum::extract::Query<LogProofQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let hash_bytes = hex::decode(&q.hash).map_err(|_| AppError::InvalidHash)?;
+    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+
+    let leaf_index = state
+        .storage
+        .get_log_index(&state.config.id, &hash_array)
+        .await?
+        .ok_or(AppError::NotBatched)?;
+
+    if leaf_index >= q.tree_size {
+        // Leaf was added after the requested STH — can't prove inclusion.
+        return Err(AppError::NotFound);
+    }
+
+    let sth = state
+        .storage
+        .get_sth(&state.config.id, q.tree_size)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let mut leaves = state.storage.get_log_leaves(&state.config.id).await?;
+    if (leaves.len() as u64) < q.tree_size {
+        return Err(AppError::InternalError);
+    }
+    leaves.truncate(q.tree_size as usize);
+
+    let path = inclusion_path(leaf_index as usize, &leaves)
+        .ok_or_else(|| AppError::Other(anyhow::anyhow!("inclusion path generation failed")))?;
+
+    Ok(Json(LogInclusionProofResponse {
+        leaf_index,
+        tree_size: q.tree_size,
+        audit_path: path.iter().map(hex::encode).collect(),
+        sth,
     }))
 }
 
@@ -593,7 +801,9 @@ async fn timestamp_handler(
             .get_attestation(&hash)
             .await?
             .ok_or(AppError::InternalError)?;
-        return Ok(Json(TimestampResponse { attestation: existing }));
+        return Ok(Json(TimestampResponse {
+            attestation: existing,
+        }));
     }
 
     let sequence = state.storage.get_next_sequence(&state.config.id).await?;
@@ -635,8 +845,7 @@ async fn timestamp_handler(
                     required: state.config.threshold,
                 });
             }
-            let signer_ids: Vec<String> =
-                responses.iter().map(|r| r.witness_id.clone()).collect();
+            let signer_ids: Vec<String> = responses.iter().map(|r| r.witness_id.clone()).collect();
             let individual_signatures: Vec<Vec<u8>> =
                 responses.into_iter().map(|r| r.signature).collect();
             tracing::info!(
@@ -677,7 +886,9 @@ async fn timestamp_handler(
     };
     let _ = state.event_tx.send(event);
 
-    Ok(Json(TimestampResponse { attestation: signed }))
+    Ok(Json(TimestampResponse {
+        attestation: signed,
+    }))
 }
 
 // ============================================================================
@@ -743,12 +954,12 @@ async fn federation_anchor_handler(
     );
 
     let sequence = state.storage.get_next_sequence(&state.config.id).await?;
-    let attestation = Attestation::new(
-        request.batch.merkle_root,
-        state.config.id.clone(),
-        sequence,
+    let attestation =
+        Attestation::new(request.batch.merkle_root, state.config.id.clone(), sequence);
+    tracing::debug!(
+        "Created attestation for batch cross-anchor: {}",
+        attestation
     );
-    tracing::debug!("Created attestation for batch cross-anchor: {}", attestation);
 
     let responses = collect_signatures_until_threshold(
         &state.config.witnesses,
@@ -771,13 +982,37 @@ async fn federation_anchor_handler(
         state.config.threshold
     );
 
-    let signatures: Vec<witness_core::WitnessSignature> = responses
-        .into_iter()
-        .map(|r| witness_core::WitnessSignature {
-            witness_id: r.witness_id,
-            signature: r.signature,
-        })
-        .collect();
+    let witness_attestation = match state.config.signature_scheme {
+        SignatureScheme::Ed25519 => {
+            let mut signed = SignedAttestation::new(attestation.clone());
+            for response in responses {
+                signed.add_signature(response.witness_id, response.signature);
+            }
+            signed
+        }
+        SignatureScheme::BLS => {
+            let signer_ids: Vec<String> = responses.iter().map(|r| r.witness_id.clone()).collect();
+            let individual_signatures: Vec<Vec<u8>> =
+                responses.into_iter().map(|r| r.signature).collect();
+            let aggregated = witness_core::aggregate_signatures_bls(&individual_signatures)
+                .map_err(|e| {
+                    tracing::error!("BLS aggregation for cross-anchor failed: {}", e);
+                    AppError::InvalidSignature
+                })?;
+            SignedAttestation::new_with_aggregated(attestation.clone(), aggregated, signer_ids)
+        }
+    };
+
+    // Sanity check: re-verify the cross-anchor attestation against our own config
+    // before sending it to the peer.  Catches any aggregation/signing bugs locally
+    // instead of leaking bad cross-anchors into the federation.
+    witness_core::verify_signed_attestation(&witness_attestation, &state.config).map_err(|e| {
+        tracing::error!(
+            "Self-verification of cross-anchor attestation failed: {}",
+            e
+        );
+        AppError::InvalidSignature
+    })?;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -787,7 +1022,7 @@ async fn federation_anchor_handler(
     let cross_anchor = witness_core::CrossAnchor {
         batch: request.batch,
         witnessing_network: state.config.id.clone(),
-        signatures,
+        witness_attestation,
         timestamp,
     };
 
@@ -843,9 +1078,7 @@ async fn handle_ws_connection(
     // forwarding any events.
     if let Some(ref expected_token) = required_token {
         if sender
-            .send(Message::Text(
-                r#"{"type":"auth_required"}"#.to_string().into(),
-            ))
+            .send(Message::Text(r#"{"type":"auth_required"}"#.to_string()))
             .await
             .is_err()
         {
@@ -887,7 +1120,7 @@ async fn handle_ws_connection(
         while let Ok(event) = event_rx.recv().await {
             match serde_json::to_string(&event) {
                 Ok(json) => {
-                    if sender.send(Message::Text(json.into())).await.is_err() {
+                    if sender.send(Message::Text(json)).await.is_err() {
                         break;
                     }
                 }

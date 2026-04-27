@@ -43,9 +43,10 @@ impl FederationClient {
             let batch = batch.clone();
             let client = self.http_client.clone();
 
-            let task = tokio::spawn(async move {
-                Self::request_cross_anchor(&client, &peer, &batch).await
-            });
+            let task =
+                tokio::spawn(
+                    async move { Self::request_cross_anchor(&client, &peer, &batch).await },
+                );
 
             tasks.push(task);
         }
@@ -115,12 +116,7 @@ impl FederationClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Peer {} returned error {}: {}",
-                peer.id,
-                status,
-                error_text
-            );
+            anyhow::bail!("Peer {} returned error {}: {}", peer.id, status, error_text);
         }
 
         let cross_anchor_response: CrossAnchorResponse = response

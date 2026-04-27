@@ -23,9 +23,9 @@ impl WitnessServer {
     pub fn new(config: WitnessNodeConfig) -> Self {
         Self {
             config: Arc::new(config),
-            sign_rate_limiter: Arc::new(RateLimiter::dashmap(
-                Quota::per_minute(NonZeroU32::new(60).unwrap()),
-            )),
+            sign_rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
+                NonZeroU32::new(60).unwrap(),
+            ))),
         }
     }
 
@@ -100,11 +100,7 @@ async fn sign_handler(
         .unwrap()
         .as_secs();
 
-    let time_diff = if request.attestation.timestamp > now {
-        request.attestation.timestamp - now
-    } else {
-        now - request.attestation.timestamp
-    };
+    let time_diff = request.attestation.timestamp.abs_diff(now);
 
     if time_diff > server.config.max_clock_skew {
         tracing::warn!(
@@ -190,4 +186,3 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .ok()?;
     value.strip_prefix("Bearer ")
 }
-

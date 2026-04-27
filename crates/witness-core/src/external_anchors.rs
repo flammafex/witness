@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::federation::AttestationBatch;
+use serde::{Deserialize, Serialize};
 
 /// External anchor provider types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -157,7 +157,10 @@ mod tests {
         assert!(json.contains("internet_archive"));
 
         let deserialized: AnchorProviderConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.provider_type, AnchorProviderType::InternetArchive);
+        assert_eq!(
+            deserialized.provider_type,
+            AnchorProviderType::InternetArchive
+        );
     }
 
     #[test]

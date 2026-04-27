@@ -15,7 +15,7 @@ authors = ["The Carpocratian Church of Commonaltity and Equality, Inc."]
 repository = "https://git.carpocratian.org/sibyl/witness"
 homepage = "https://git.carpocratian.org/sibyl/witness"
 readme = "README.md"
-description = "A federated threshold witness timestamping system"
+description = "A content-private, accountless quorum timestamper"
 
 [workspace.dependencies]
 # Core dependencies

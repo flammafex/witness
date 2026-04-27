@@ -54,12 +54,8 @@ impl FreebirdClient {
 
     /// Create a client from environment variables
     pub fn from_env() -> Option<Self> {
-        let verifier_url = std::env::var("FREEBIRD_VERIFIER_URL").ok();
-
         // If no verifier URL is set, Freebird is disabled
-        if verifier_url.is_none() {
-            return None;
-        }
+        let verifier_url = Some(std::env::var("FREEBIRD_VERIFIER_URL").ok()?);
 
         let issuer_ids: Vec<String> = std::env::var("FREEBIRD_ISSUER_IDS")
             .unwrap_or_default()
@@ -106,8 +102,7 @@ impl FreebirdClient {
     /// Returns Err if the token is invalid, expired, or verification failed.
     pub async fn verify(&self, token: &FreebirdToken) -> Result<(), FreebirdError> {
         // Check if issuer is trusted
-        if !self.config.issuer_ids.is_empty()
-            && !self.config.issuer_ids.contains(&token.issuer_id)
+        if !self.config.issuer_ids.is_empty() && !self.config.issuer_ids.contains(&token.issuer_id)
         {
             return Err(FreebirdError::UntrustedIssuer(token.issuer_id.clone()));
         }
@@ -138,7 +133,11 @@ impl FreebirdClient {
         // Choose endpoint based on consume_tokens config:
         // - /v1/verify: consumes token (records nullifier, prevents reuse)
         // - /v1/check: validates only (no consumption, token can be reused)
-        let endpoint = if self.config.consume_tokens { "verify" } else { "check" };
+        let endpoint = if self.config.consume_tokens {
+            "verify"
+        } else {
+            "check"
+        };
         let url = format!("{}/v1/{}", verifier_url.trim_end_matches('/'), endpoint);
 
         crate::http_client::validate_outbound_url(&url).map_err(|e| {
@@ -151,7 +150,9 @@ impl FreebirdClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| FreebirdError::VerificationFailed(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| {
+                FreebirdError::VerificationFailed(format!("HTTP request failed: {}", e))
+            })?;
 
         // Check HTTP status
         if !response.status().is_success() {

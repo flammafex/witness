@@ -1,11 +1,9 @@
 use anyhow::Result;
-use reqwest::Client;
-use witness_core::{
-    AnchorProviderType, AnchorRequest, AnchorResponse, ExternalAnchorProof,
-};
 use ethers::prelude::*;
-use std::str::FromStr;
+use reqwest::Client;
 use std::convert::TryFrom;
+use std::str::FromStr;
+use witness_core::{AnchorProviderType, AnchorRequest, AnchorResponse, ExternalAnchorProof};
 
 /// Trait for external anchor providers
 #[async_trait::async_trait]
@@ -76,7 +74,8 @@ impl AnchorProvider for InternetArchiveProvider {
             save_url
         );
 
-        match self.client
+        match self
+            .client
             .get(&save_url)
             .header("User-Agent", "Witness-Timestamping/0.1.0")
             .send()
@@ -161,9 +160,8 @@ impl EthereumProvider {
 
         let provider = Provider::<Http>::try_from(rpc_url)?;
         let chain_id = provider.get_chainid().await?;
-        
-        let wallet = LocalWallet::from_str(private_key)?
-            .with_chain_id(chain_id.as_u64());
+
+        let wallet = LocalWallet::from_str(private_key)?.with_chain_id(chain_id.as_u64());
 
         let client = SignerMiddleware::new(provider, wallet);
 
@@ -181,7 +179,7 @@ impl AnchorProvider for EthereumProvider {
         // 2. Construct the transaction
         // We send 0 ETH to ourselves (the sender), just to carry the data payload.
         let tx = TransactionRequest::new()
-            .to(self.client.address()) 
+            .to(self.client.address())
             .value(0)
             .data(data.clone());
 
@@ -232,18 +230,30 @@ impl AnchorProvider for EthereumProvider {
                         // Reverted
                         let error = "Ethereum transaction reverted".to_string();
                         tracing::error!("{}", error);
-                        Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+                        Ok(AnchorResponse {
+                            success: false,
+                            proof: None,
+                            error: Some(error),
+                        })
                     }
                 } else {
                     // Dropped?
                     let error = "Ethereum transaction dropped".to_string();
-                    Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+                    Ok(AnchorResponse {
+                        success: false,
+                        proof: None,
+                        error: Some(error),
+                    })
                 }
             }
             Err(e) => {
                 let error = format!("Failed to send Ethereum transaction: {}", e);
                 tracing::error!("{}", error);
-                Ok(AnchorResponse { success: false, proof: None, error: Some(error) })
+                Ok(AnchorResponse {
+                    success: false,
+                    proof: None,
+                    error: Some(error),
+                })
             }
         }
     }
@@ -424,7 +434,8 @@ impl AnchorProvider for DnsTxtProvider {
         );
 
         // Build DNS API request
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(&self.api_url)
             .header("Content-Type", "application/json")
             .json(&serde_json::json!({
@@ -480,7 +491,11 @@ impl AnchorProvider for DnsTxtProvider {
                         response.text().await.unwrap_or_default()
                     );
 
-                    tracing::warn!("Failed to create DNS TXT record for batch {}: {}", request.batch.id, error);
+                    tracing::warn!(
+                        "Failed to create DNS TXT record for batch {}: {}",
+                        request.batch.id,
+                        error
+                    );
 
                     Ok(AnchorResponse {
                         success: false,

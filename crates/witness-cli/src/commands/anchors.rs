@@ -33,7 +33,8 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
 
             for (i, anchor) in anchors.iter().enumerate() {
                 println!("Anchor #{}: {:?}", i + 1, anchor.provider);
-                println!("  Timestamp: {} ({})",
+                println!(
+                    "  Timestamp: {} ({})",
                     anchor.timestamp,
                     format_timestamp(anchor.timestamp)
                 );
@@ -41,10 +42,12 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
                 // Display provider-specific proof data
                 match anchor.provider {
                     witness_core::AnchorProviderType::InternetArchive => {
-                        if let Some(url) = anchor.proof.get("archive_url").and_then(|v| v.as_str()) {
+                        if let Some(url) = anchor.proof.get("archive_url").and_then(|v| v.as_str())
+                        {
                             println!("  Archive URL: {}", url);
                         }
-                        if let Some(root) = anchor.proof.get("merkle_root").and_then(|v| v.as_str()) {
+                        if let Some(root) = anchor.proof.get("merkle_root").and_then(|v| v.as_str())
+                        {
                             println!("  Merkle Root: {}", root);
                         }
                     }
@@ -65,7 +68,10 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
             }
 
             println!();
-            println!("✓ Attestation is anchored to {} external service(s)", anchors.len());
+            println!(
+                "✓ Attestation is anchored to {} external service(s)",
+                anchors.len()
+            );
         }
         _ => {
             anyhow::bail!("Invalid output format: {}", output_format);
@@ -76,7 +82,7 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
 }
 
 fn format_timestamp(unix_secs: u64) -> String {
-    use std::time::{UNIX_EPOCH, Duration};
+    use std::time::{Duration, UNIX_EPOCH};
 
     let timestamp = UNIX_EPOCH + Duration::from_secs(unix_secs);
     let datetime = chrono::DateTime::<chrono::Utc>::from(timestamp);

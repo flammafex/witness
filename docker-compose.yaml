@@ -1,3 +1,5 @@
+# Pulls pre-built images from the Forgejo registry.
+# To build locally instead: docker compose -f docker-compose.yaml -f docker-compose.build.yaml up
 services:
   # ============================================================================
   # SETUP SERVICE (Ephemeral)
@@ -5,9 +7,7 @@ services:
   # This service runs once to generate keys and configuration files for the
   # cluster. It saves them to the shared 'witness-config' volume.
   setup:
-    build:
-      context: .
-      target: witness-node
+    image: git.carpocratian.org/sibyl/witness-node:latest
     volumes:
       - witness-config:/data
     entrypoint: ["/bin/bash", "-c"]
@@ -64,9 +64,7 @@ services:
   # WITNESS NODES
   # ============================================================================
   witness-1:
-    build:
-      context: .
-      target: witness-node
+    image: git.carpocratian.org/sibyl/witness-node:latest
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -83,9 +81,7 @@ services:
       - witness-net
 
   witness-2:
-    build:
-      context: .
-      target: witness-node
+    image: git.carpocratian.org/sibyl/witness-node:latest
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -102,9 +98,7 @@ services:
       - witness-net
 
   witness-3:
-    build:
-      context: .
-      target: witness-node
+    image: git.carpocratian.org/sibyl/witness-node:latest
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -124,9 +118,7 @@ services:
   # GATEWAY
   # ============================================================================
   gateway:
-    build:
-      context: .
-      target: witness-gateway
+    image: git.carpocratian.org/sibyl/witness-gateway:latest
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -141,6 +133,9 @@ services:
     volumes:
       - witness-config:/config
       - gateway-data:/data
+    env_file:
+      - path: .env
+        required: false
     environment:
       - RUST_LOG=info,witness_gateway=debug
     # Point config to the shared volume, and db to the persistence volume

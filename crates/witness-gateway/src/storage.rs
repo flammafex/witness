@@ -1,12 +1,12 @@
 use anyhow::Result;
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteSynchronous},
     Row,
 };
 use std::str::FromStr;
 use witness_core::{
     signature_scheme::AttestationSignatures, Attestation, AttestationBatch, CrossAnchor,
-    ExternalAnchorProof, SignedAttestation, WitnessSignature,
+    ExternalAnchorProof, SignedAttestation, SignedTreeHead, TreeHead, WitnessSignature,
 };
 
 pub struct Storage {
@@ -17,6 +17,7 @@ impl Storage {
     pub async fn new(database_url: &str) -> Result<Self> {
         let opts = SqliteConnectOptions::from_str(database_url)?
             .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
             .create_if_missing(true);
         let pool = SqlitePool::connect_with(opts).await?;
         Ok(Self { pool })
@@ -105,12 +106,10 @@ impl Storage {
     /// Read signatures for a hash — checks the aggregated tables first, falls back to
     /// the multi-sig `signatures` table.
     async fn read_signatures(&self, hash_hex: &str) -> Result<AttestationSignatures> {
-        let agg_row = sqlx::query(
-            r#"SELECT signature FROM aggregated_signatures WHERE hash = ?1"#,
-        )
-        .bind(hash_hex)
-        .fetch_optional(&self.pool)
-        .await?;
+        let agg_row = sqlx::query(r#"SELECT signature FROM aggregated_signatures WHERE hash = ?1"#)
+            .bind(hash_hex)
+            .fetch_optional(&self.pool)
+            .await?;
 
         if let Some(agg_row) = agg_row {
             let signature: Vec<u8> = agg_row.get("signature");
@@ -125,12 +124,11 @@ impl Storage {
             return Ok(AttestationSignatures::Aggregated { signature, signers });
         }
 
-        let sig_rows = sqlx::query(
-            r#"SELECT witness_id, signature FROM signatures WHERE hash = ?1"#,
-        )
-        .bind(hash_hex)
-        .fetch_all(&self.pool)
-        .await?;
+        let sig_rows =
+            sqlx::query(r#"SELECT witness_id, signature FROM signatures WHERE hash = ?1"#)
+                .bind(hash_hex)
+                .fetch_all(&self.pool)
+                .await?;
 
         let witness_sigs: Vec<WitnessSignature> = sig_rows
             .iter()
@@ -391,7 +389,6 @@ impl Storage {
     }
 
     /// Get a batch by ID
-    #[allow(dead_code)]
     pub async fn get_batch(&self, batch_id: i64) -> Result<Option<AttestationBatch>> {
         let row = sqlx::query(
             r#"
@@ -494,18 +491,21 @@ impl Storage {
         Ok(Some((batch_id, merkle_index as usize, merkle_root)))
     }
 
-    /// Store a cross-anchor
-    #[allow(dead_code)]
+    /// Store a cross-anchor.  The peer's [`SignedAttestation`] is serialized
+    /// as JSON so the row is a self-contained, independently verifiable
+    /// witness over the batch's merkle root.
     pub async fn store_cross_anchor(&self, cross_anchor: &CrossAnchor) -> Result<()> {
-        // Insert cross-anchor
-        let result = sqlx::query(
+        let witness_attestation_json = serde_json::to_string(&cross_anchor.witness_attestation)?;
+
+        sqlx::query(
             r#"
-            INSERT INTO cross_anchors (batch_id, witnessing_network, timestamp, created_at)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO cross_anchors (batch_id, witnessing_network, witness_attestation_json, timestamp, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             "#,
         )
         .bind(cross_anchor.batch.id as i64)
         .bind(&cross_anchor.witnessing_network)
+        .bind(&witness_attestation_json)
         .bind(cross_anchor.timestamp as i64)
         .bind(
             std::time::SystemTime::now()
@@ -516,79 +516,214 @@ impl Storage {
         .execute(&self.pool)
         .await?;
 
-        let cross_anchor_id = result.last_insert_rowid();
-
-        // Store signatures
-        for sig in &cross_anchor.signatures {
-            sqlx::query(
-                r#"
-                INSERT INTO cross_anchor_signatures (cross_anchor_id, witness_id, signature)
-                VALUES (?1, ?2, ?3)
-                "#,
-            )
-            .bind(cross_anchor_id)
-            .bind(&sig.witness_id)
-            .bind(&sig.signature)
-            .execute(&self.pool)
-            .await?;
-        }
-
         Ok(())
     }
 
     /// Get cross-anchors for a batch
-    #[allow(dead_code)]
     pub async fn get_cross_anchors(&self, batch_id: i64) -> Result<Vec<CrossAnchor>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, witnessing_network, timestamp
+            SELECT witnessing_network, witness_attestation_json, timestamp
             FROM cross_anchors
             WHERE batch_id = ?1
+            ORDER BY id ASC
             "#,
         )
         .bind(batch_id)
         .fetch_all(&self.pool)
         .await?;
 
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let batch = self
             .get_batch(batch_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Batch not found"))?;
 
-        let mut cross_anchors = Vec::new();
+        let mut cross_anchors = Vec::with_capacity(rows.len());
 
         for row in rows {
-            let cross_anchor_id: i64 = row.get("id");
-
-            // Get signatures
-            let sig_rows = sqlx::query(
-                r#"
-                SELECT witness_id, signature
-                FROM cross_anchor_signatures
-                WHERE cross_anchor_id = ?1
-                "#,
-            )
-            .bind(cross_anchor_id)
-            .fetch_all(&self.pool)
-            .await?;
-
-            let signatures: Vec<WitnessSignature> = sig_rows
-                .iter()
-                .map(|row| WitnessSignature {
-                    witness_id: row.get("witness_id"),
-                    signature: row.get("signature"),
-                })
-                .collect();
+            let witness_attestation_json: String = row.get("witness_attestation_json");
+            let witness_attestation: SignedAttestation =
+                serde_json::from_str(&witness_attestation_json)?;
 
             cross_anchors.push(CrossAnchor {
                 batch: batch.clone(),
                 witnessing_network: row.get("witnessing_network"),
-                signatures,
+                witness_attestation,
                 timestamp: row.get::<i64, _>("timestamp") as u64,
             });
         }
 
         Ok(cross_anchors)
+    }
+
+    // ========== RFC 9162 Signed Tree Heads ==========
+
+    /// Persist a [`SignedTreeHead`] alongside the batch it was issued for.
+    /// `tree_size` is the global log size after `batch_id` was appended;
+    /// each closed batch produces exactly one STH.
+    pub async fn store_sth(&self, sth: &SignedTreeHead, batch_id: i64) -> Result<()> {
+        let signed_json = serde_json::to_string(&sth.signed_attestation)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO signed_tree_heads (
+                tree_size, network_id, timestamp, root_hash,
+                batch_id, signed_attestation_json, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "#,
+        )
+        .bind(sth.tree_head.tree_size as i64)
+        .bind(&sth.tree_head.network_id)
+        .bind(sth.tree_head.timestamp as i64)
+        .bind(&sth.tree_head.root_hash[..])
+        .bind(batch_id)
+        .bind(&signed_json)
+        .bind(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Most-recent STH for `network_id`, or `None` if no batches have closed
+    /// yet (the log is empty).
+    pub async fn get_latest_sth(&self, network_id: &str) -> Result<Option<SignedTreeHead>> {
+        let row = sqlx::query(
+            r#"
+            SELECT tree_size, timestamp, root_hash, signed_attestation_json
+            FROM signed_tree_heads
+            WHERE network_id = ?1
+            ORDER BY tree_size DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(network_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Self::row_to_sth(network_id, row)
+    }
+
+    /// Look up the STH for a specific `tree_size` (one per closed batch).
+    pub async fn get_sth(
+        &self,
+        network_id: &str,
+        tree_size: u64,
+    ) -> Result<Option<SignedTreeHead>> {
+        let row = sqlx::query(
+            r#"
+            SELECT tree_size, timestamp, root_hash, signed_attestation_json
+            FROM signed_tree_heads
+            WHERE network_id = ?1 AND tree_size = ?2
+            "#,
+        )
+        .bind(network_id)
+        .bind(tree_size as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Self::row_to_sth(network_id, row)
+    }
+
+    fn row_to_sth(network_id: &str, row: sqlx::sqlite::SqliteRow) -> Result<Option<SignedTreeHead>> {
+        let tree_size: i64 = row.get("tree_size");
+        let timestamp: i64 = row.get("timestamp");
+        let root_vec: Vec<u8> = row.get("root_hash");
+        let root_hash: [u8; 32] = root_vec
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid root_hash length"))?;
+
+        let signed_json: String = row.get("signed_attestation_json");
+        let signed_attestation: SignedAttestation = serde_json::from_str(&signed_json)?;
+
+        Ok(Some(SignedTreeHead {
+            tree_head: TreeHead {
+                network_id: network_id.to_string(),
+                tree_size: tree_size as u64,
+                timestamp: timestamp as u64,
+                root_hash,
+            },
+            signed_attestation,
+        }))
+    }
+
+    /// All log leaves for `network_id` in append order
+    /// `(batch_id ASC, merkle_index ASC)`.  Used to compute the global
+    /// Merkle Tree Hash and inclusion / consistency proofs.
+    pub async fn get_log_leaves(&self, network_id: &str) -> Result<Vec<[u8; 32]>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT ba.hash AS hash
+            FROM batch_attestations ba
+            JOIN batches b ON ba.batch_id = b.id
+            WHERE b.network_id = ?1
+            ORDER BY ba.batch_id ASC, ba.merkle_index ASC
+            "#,
+        )
+        .bind(network_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let hash_hex: String = row.get("hash");
+            let bytes = hex::decode(&hash_hex)?;
+            let arr: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid leaf hash length"))?;
+            out.push(arr);
+        }
+        Ok(out)
+    }
+
+    /// Position of `attestation_hash` in the global log, if it has been
+    /// included in a closed batch.
+    pub async fn get_log_index(
+        &self,
+        network_id: &str,
+        attestation_hash: &[u8; 32],
+    ) -> Result<Option<u64>> {
+        let hash_hex = hex::encode(attestation_hash);
+        let row = sqlx::query(
+            r#"
+            SELECT (
+                SELECT COUNT(*)
+                FROM batch_attestations ba2
+                JOIN batches b2 ON ba2.batch_id = b2.id
+                WHERE b2.network_id = ?1
+                  AND (
+                    ba2.batch_id < ba.batch_id
+                    OR (ba2.batch_id = ba.batch_id AND ba2.merkle_index < ba.merkle_index)
+                  )
+            ) AS log_index
+            FROM batch_attestations ba
+            JOIN batches b ON ba.batch_id = b.id
+            WHERE b.network_id = ?1 AND ba.hash = ?2
+            "#,
+        )
+        .bind(network_id)
+        .bind(&hash_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get::<i64, _>("log_index") as u64))
     }
 
     // ========== Phase 3: External Anchor Proofs ==========
@@ -671,11 +806,9 @@ impl Storage {
 
     /// Count total attestations
     pub async fn count_attestations(&self) -> Result<u64> {
-        let row = sqlx::query(
-            r#"SELECT COUNT(*) as count FROM attestations"#,
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let row = sqlx::query(r#"SELECT COUNT(*) as count FROM attestations"#)
+            .fetch_one(&self.pool)
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -683,12 +816,11 @@ impl Storage {
 
     /// Count attestations since a given timestamp
     pub async fn count_attestations_since(&self, since: u64) -> Result<u64> {
-        let row = sqlx::query(
-            r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#,
-        )
-        .bind(since as i64)
-        .fetch_one(&self.pool)
-        .await?;
+        let row =
+            sqlx::query(r#"SELECT COUNT(*) as count FROM attestations WHERE timestamp >= ?1"#)
+                .bind(since as i64)
+                .fetch_one(&self.pool)
+                .await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -696,11 +828,9 @@ impl Storage {
 
     /// Count total batches
     pub async fn count_batches(&self) -> Result<u64> {
-        let row = sqlx::query(
-            r#"SELECT COUNT(*) as count FROM batches"#,
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let row = sqlx::query(r#"SELECT COUNT(*) as count FROM batches"#)
+            .fetch_one(&self.pool)
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -960,7 +1090,10 @@ mod tests {
         assert_eq!(retrieved.attestation_count, 3);
 
         // Verify attestations are linked to batch
-        let batch_hashes = storage.get_batch_attestation_hashes(batch_id).await.unwrap();
+        let batch_hashes = storage
+            .get_batch_attestation_hashes(batch_id)
+            .await
+            .unwrap();
         assert_eq!(batch_hashes.len(), 3);
         assert_eq!(batch_hashes[0], hashes[0]);
     }

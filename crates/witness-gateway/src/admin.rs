@@ -71,11 +71,7 @@ async fn stats_handler(State(state): State<AdminState>) -> impl IntoResponse {
         .unwrap_or(Duration::ZERO)
         .as_secs();
 
-    let total_attestations = state
-        .storage
-        .count_attestations()
-        .await
-        .unwrap_or(0);
+    let total_attestations = state.storage.count_attestations().await.unwrap_or(0);
 
     let attestations_24h = state
         .storage
@@ -86,11 +82,7 @@ async fn stats_handler(State(state): State<AdminState>) -> impl IntoResponse {
     // Update Prometheus gauge
     metrics::set_attestations_24h(attestations_24h);
 
-    let total_batches = state
-        .storage
-        .count_batches()
-        .await
-        .unwrap_or(0);
+    let total_batches = state.storage.count_batches().await.unwrap_or(0);
 
     Json(DashboardStats {
         network_id: state.config.id.clone(),

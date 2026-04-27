@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_PREFIX: git.carpocratian.org/sibyl/witness
+  IMAGE_PREFIX: git.carpocratian.org/sibyl
 
 jobs:
   build:
@@ -26,7 +26,7 @@ jobs:
       - name: Compute tags
         id: tags
         run: |
-          IMAGE="${{ env.IMAGE_PREFIX }}-${{ matrix.target }}"
+          IMAGE="${{ env.IMAGE_PREFIX }}/${{ matrix.target }}"
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           REF="${{ github.ref }}"
           TAGS="${IMAGE}:${SHA}"

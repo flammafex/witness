@@ -38,8 +38,11 @@ pub fn set_attestations_24h(count: u64) {
 
 /// Update witness health status
 pub fn set_witness_health(witness_id: &str, healthy: bool) {
-    gauge!("witness_witness_health", "witness" => witness_id.to_string())
-        .set(if healthy { 1.0 } else { 0.0 });
+    gauge!("witness_witness_health", "witness" => witness_id.to_string()).set(if healthy {
+        1.0
+    } else {
+        0.0
+    });
 }
 
 /// Update uptime gauge

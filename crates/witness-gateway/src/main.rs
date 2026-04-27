@@ -18,7 +18,6 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing_subscriber;
 use witness_core::NetworkConfig;
 
 use admin::AdminState;
@@ -160,11 +159,19 @@ async fn main() -> Result<()> {
         storage.clone(),
     ));
 
+    // Witness HTTP client shared between batch-manager STH signing and the
+    // request-time signing path inside `GatewayServer::run`.
+    let witness_client = Arc::new(WitnessClient::new());
+
     // Initialize batch manager (Phase 2) with anchor manager and federation client
     let batch_manager = Arc::new(
-        BatchManager::new(network_config.clone(), storage.clone())
-            .with_anchor_manager(anchor_manager.clone())
-            .with_federation_client(federation_client.clone()),
+        BatchManager::new(
+            network_config.clone(),
+            storage.clone(),
+            witness_client.clone(),
+        )
+        .with_anchor_manager(anchor_manager.clone())
+        .with_federation_client(federation_client.clone()),
     );
 
     // Start batch manager background task
@@ -178,9 +185,7 @@ async fn main() -> Result<()> {
             .map(str::trim)
             .filter(|k| !k.is_empty())
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--admin-ui requires --admin-api-key (or WITNESS_ADMIN_API_KEY)"
-                )
+                anyhow::anyhow!("--admin-ui requires --admin-api-key (or WITNESS_ADMIN_API_KEY)")
             })?
             .to_string();
 
@@ -226,9 +231,7 @@ async fn main() -> Result<()> {
              Timestamp endpoint has no proof-of-work/humanity protection."
         );
     }
-    if network_config.federation.enabled
-        && network_config.federation.inbound_auth_token.is_none()
-    {
+    if network_config.federation.enabled && network_config.federation.inbound_auth_token.is_none() {
         tracing::warn!(
             "SECURITY: Federation is enabled but inbound_auth_token is not set. \
              Federation anchor endpoint accepts unauthenticated requests."

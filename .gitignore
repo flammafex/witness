@@ -1,6 +1,5 @@
 # Rust build artifacts
 /target/
-Cargo.lock
 
 # Mac artifacts
 .DS_Store
@@ -13,6 +12,9 @@ Cargo.lock
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Serena MCP (AI tool cache + memories — local only, like .claude/)
+.serena/
 
 # Local test configs (contain private keys)
 *-single.json

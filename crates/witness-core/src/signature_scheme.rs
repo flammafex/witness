@@ -1,21 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 /// Signature scheme used by the network
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SignatureScheme {
     /// Ed25519 signatures (Phase 1, multi-sig)
+    #[default]
     Ed25519,
 
     /// BLS signatures (Phase 4, aggregated)
     #[serde(rename = "bls")]
     BLS,
-}
-
-impl Default for SignatureScheme {
-    fn default() -> Self {
-        SignatureScheme::Ed25519
-    }
 }
 
 impl std::fmt::Display for SignatureScheme {

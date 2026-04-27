@@ -16,10 +16,7 @@ pub fn real_ip(
     behind_proxy: bool,
 ) -> IpAddr {
     if behind_proxy {
-        if let Some(forwarded) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             // Take the leftmost (original client) address
             if let Some(first) = forwarded.split(',').next() {
                 if let Ok(ip) = first.trim().parse::<IpAddr>() {

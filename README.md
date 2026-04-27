@@ -1,8 +1,8 @@
 # 🙌 Witness
 
-**Prove when something existed—without trusting any single party, and without the bottlenecks of a blockchain.**
+**A content-private, accountless quorum timestamper. Anonymous rate-limiting available with [Freebird](https://git.carpocratian.org/sibyl/freebird).**
 
-Witness is a federated threshold-signed timestamping service. It provides cryptographic proof of existence with instant, free transactions—using blockchains only as an optional settlement layer, not as an execution engine.
+Witness lets a federation of independent operators co-sign that a hash existed at a particular time. Clients submit only SHA-256 hashes—never content—and receive a threshold signature from a quorum of witnesses; no account, login, or wallet is required. Batches can be cross-anchored by peer federations and committed to external systems (Internet Archive, Trillian, DNS, Ethereum) for additional, independent durability.
 
 ## Features
 

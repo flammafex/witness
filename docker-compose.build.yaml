@@ -1,0 +1,27 @@
+# Override to build images locally instead of pulling from the registry.
+# Usage: docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build
+services:
+  setup:
+    build:
+      context: .
+      target: witness-node
+
+  witness-1:
+    build:
+      context: .
+      target: witness-node
+
+  witness-2:
+    build:
+      context: .
+      target: witness-node
+
+  witness-3:
+    build:
+      context: .
+      target: witness-node
+
+  gateway:
+    build:
+      context: .
+      target: witness-gateway

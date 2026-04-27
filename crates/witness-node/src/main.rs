@@ -4,7 +4,6 @@ mod server;
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tracing_subscriber;
 
 use config::WitnessNodeConfig;
 use server::WitnessServer;

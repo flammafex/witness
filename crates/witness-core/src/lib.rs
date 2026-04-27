@@ -20,6 +20,7 @@ pub mod crypto;
 pub mod error;
 pub mod external_anchors;
 pub mod federation;
+pub mod log;
 pub mod merkle;
 pub mod signature_scheme;
 pub mod types;
@@ -43,17 +44,24 @@ pub use error::{Result, WitnessError};
 // merkle
 pub use merkle::{MerkleProof, MerkleTree};
 
+// log (RFC 9162 STH / consistency proofs)
+pub use log::{
+    verify_inclusion_against_sth, verify_log_consistency, verify_signed_tree_head,
+    LogConsistencyProof, SignedTreeHead, TreeHead,
+};
+
 // federation
 pub use federation::{
-    AttestationBatch, CrossAnchor, CrossAnchorRequest, CrossAnchorResponse, FederatedAttestation,
-    FederatedVerifyRequest, FederatedVerifyResponse, FederationConfig, PeerNetworkInfo,
-    VerificationLevel,
+    verify_cross_anchor, verify_proof_bundle, AttestationBatch, BatchInclusion, CrossAnchor,
+    CrossAnchorRequest, CrossAnchorResponse, FederatedAttestation, FederatedVerifyRequest,
+    FederatedVerifyResponse, FederationConfig, PeerNetworkInfo, ProofBundle,
+    ProofBundleVerification, ProofVerificationConfig, VerificationLevel,
 };
 
 // bls
 pub use bls::{
-    aggregate_signatures_bls, decode_bls_public_key, decode_bls_secret_key,
-    encode_bls_public_key, encode_bls_secret_key, generate_bls_keypair, sign_attestation_bls,
+    aggregate_signatures_bls, decode_bls_public_key, decode_bls_secret_key, encode_bls_public_key,
+    encode_bls_secret_key, generate_bls_keypair, sign_attestation_bls,
     verify_aggregated_signature_bls, verify_signature_bls,
 };
 

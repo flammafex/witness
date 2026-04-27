@@ -1,11 +1,12 @@
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use witness_core::{
-    AnchorProviderType, AnchorRequest,
-    AttestationBatch, ExternalAnchorProof, NetworkConfig,
+    AnchorProviderType, AnchorRequest, AttestationBatch, ExternalAnchorProof, NetworkConfig,
 };
 
-use crate::anchor_providers::{AnchorProvider, DnsTxtProvider, EthereumProvider, InternetArchiveProvider, TrillianProvider};
+use crate::anchor_providers::{
+    AnchorProvider, DnsTxtProvider, EthereumProvider, InternetArchiveProvider, TrillianProvider,
+};
 use crate::metrics;
 use crate::storage::Storage;
 
@@ -33,20 +34,40 @@ impl AnchorManager {
                         providers.push(Arc::new(InternetArchiveProvider::new()));
                     }
                     AnchorProviderType::Trillian => {
-                        if let Some(log_url) = provider_config.config.get("log_url").and_then(|v| v.as_str()) {
+                        if let Some(log_url) = provider_config
+                            .config
+                            .get("log_url")
+                            .and_then(|v| v.as_str())
+                        {
                             tracing::info!("Initializing Trillian anchor provider: {}", log_url);
                             providers.push(Arc::new(TrillianProvider::new(log_url.to_string())));
                         } else {
-                            tracing::error!("Trillian provider enabled but missing 'log_url' in config");
+                            tracing::error!(
+                                "Trillian provider enabled but missing 'log_url' in config"
+                            );
                         }
                     }
                     AnchorProviderType::DnsTxt => {
-                        let api_url = provider_config.config.get("api_url").and_then(|v| v.as_str());
-                        let domain = provider_config.config.get("domain").and_then(|v| v.as_str());
-                        let api_key = provider_config.config.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let api_url = provider_config
+                            .config
+                            .get("api_url")
+                            .and_then(|v| v.as_str());
+                        let domain = provider_config
+                            .config
+                            .get("domain")
+                            .and_then(|v| v.as_str());
+                        let api_key = provider_config
+                            .config
+                            .get("api_key")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
 
                         if let (Some(api_url), Some(domain)) = (api_url, domain) {
-                            tracing::info!("Initializing DNS TXT anchor provider: {} (domain: {})", api_url, domain);
+                            tracing::info!(
+                                "Initializing DNS TXT anchor provider: {} (domain: {})",
+                                api_url,
+                                domain
+                            );
                             providers.push(Arc::new(DnsTxtProvider::new(
                                 api_url.to_string(),
                                 domain.to_string(),
@@ -57,8 +78,14 @@ impl AnchorManager {
                         }
                     }
                     AnchorProviderType::Blockchain => {
-                        let rpc_url = provider_config.config.get("rpc_url").and_then(|v| v.as_str());
-                        let private_key = provider_config.config.get("private_key").and_then(|v| v.as_str());
+                        let rpc_url = provider_config
+                            .config
+                            .get("rpc_url")
+                            .and_then(|v| v.as_str());
+                        let private_key = provider_config
+                            .config
+                            .get("private_key")
+                            .and_then(|v| v.as_str());
 
                         if let (Some(rpc_url), Some(private_key)) = (rpc_url, private_key) {
                             tracing::info!("Initializing Ethereum anchor provider: {}", rpc_url);
@@ -67,7 +94,10 @@ impl AnchorManager {
                                     providers.push(Arc::new(provider));
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to initialize Ethereum provider: {}", e);
+                                    tracing::error!(
+                                        "Failed to initialize Ethereum provider: {}",
+                                        e
+                                    );
                                 }
                             }
                         } else {
@@ -129,7 +159,11 @@ impl AnchorManager {
             let provider_clone = Arc::clone(provider);
 
             let task = tokio::spawn(async move {
-                tracing::info!("Submitting batch {} to {:?}", request_clone.batch.id, provider_type);
+                tracing::info!(
+                    "Submitting batch {} to {:?}",
+                    request_clone.batch.id,
+                    provider_type
+                );
 
                 match provider_clone.anchor(&request_clone).await {
                     Ok(response) => {
@@ -145,7 +179,9 @@ impl AnchorManager {
                                 "Failed to anchor batch {} to {:?}: {}",
                                 request_clone.batch.id,
                                 provider_type,
-                                response.error.unwrap_or_else(|| "Unknown error".to_string())
+                                response
+                                    .error
+                                    .unwrap_or_else(|| "Unknown error".to_string())
                             );
                             None
                         }
@@ -199,7 +235,8 @@ impl AnchorManager {
         );
 
         // Store anchor proofs
-        self.store_anchor_proofs(batch.id, successful_anchors).await?;
+        self.store_anchor_proofs(batch.id, successful_anchors)
+            .await?;
 
         Ok(())
     }

@@ -4,8 +4,7 @@ use crate::client::WitnessClient;
 
 pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<()> {
     // Validate hash
-    hex::decode(hash)
-        .context("Invalid hash format: must be hex encoded SHA-256")?;
+    hex::decode(hash).context("Invalid hash format: must be hex encoded SHA-256")?;
 
     if hash.len() != 64 {
         anyhow::bail!("Invalid hash length: must be 64 hex characters (32 bytes)");
@@ -28,7 +27,8 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
             println!("✓ Found timestamp");
             println!();
             println!("Hash:      {}", hex::encode(attestation.attestation.hash));
-            println!("Timestamp: {} ({})",
+            println!(
+                "Timestamp: {} ({})",
                 attestation.attestation.timestamp,
                 format_timestamp(attestation.attestation.timestamp)
             );
@@ -38,24 +38,31 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
 
             // Display signature information based on type
             if attestation.is_aggregated() {
-                println!("Signatures: BLS aggregated signature from {} witnesses", attestation.signature_count());
-                match &attestation.signatures {
-                    witness_core::signature_scheme::AttestationSignatures::Aggregated { signers, .. } => {
-                        for signer in signers {
-                            println!("  - {}", signer);
-                        }
+                println!(
+                    "Signatures: BLS aggregated signature from {} witnesses",
+                    attestation.signature_count()
+                );
+                if let witness_core::signature_scheme::AttestationSignatures::Aggregated {
+                    signers,
+                    ..
+                } = &attestation.signatures
+                {
+                    for signer in signers {
+                        println!("  - {}", signer);
                     }
-                    _ => {}
                 }
             } else {
-                println!("Signatures: {} witnesses signed", attestation.signature_count());
-                match &attestation.signatures {
-                    witness_core::signature_scheme::AttestationSignatures::MultiSig { signatures } => {
-                        for sig in signatures {
-                            println!("  - {}", sig.witness_id);
-                        }
+                println!(
+                    "Signatures: {} witnesses signed",
+                    attestation.signature_count()
+                );
+                if let witness_core::signature_scheme::AttestationSignatures::MultiSig {
+                    signatures,
+                } = &attestation.signatures
+                {
+                    for sig in signatures {
+                        println!("  - {}", sig.witness_id);
                     }
-                    _ => {}
                 }
             }
         }
