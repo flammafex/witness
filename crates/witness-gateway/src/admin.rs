@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use crate::metrics;
 use crate::storage::Storage;
@@ -124,10 +124,13 @@ async fn witnesses_handler(State(state): State<AdminState>) -> impl IntoResponse
 }
 
 async fn check_witness_health(endpoint: &str) -> (String, Option<u64>) {
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .unwrap();
+    {
+        Ok(c) => c,
+        Err(_) => return ("error:client_build".to_string(), None),
+    };
 
     let start = std::time::Instant::now();
 
@@ -780,10 +783,7 @@ fn generate_dashboard_html(config: &NetworkConfig) -> String {
 // ============================================================================
 
 fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    crate::epoch::epoch_secs()
 }
 
 fn format_time_ago(seconds: u64) -> String {

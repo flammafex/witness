@@ -261,6 +261,12 @@ fn default_freebird_consume_tokens() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimestampResponse {
     pub attestation: SignedAttestation,
+    #[serde(default = "default_status_confirmed")]
+    pub status: String,
+}
+
+fn default_status_confirmed() -> String {
+    "confirmed".to_string()
 }
 
 /// Request to verify an attestation

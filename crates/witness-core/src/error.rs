@@ -28,9 +28,6 @@ pub enum WitnessError {
 
     #[error("Timestamp too old or in future")]
     InvalidTimestamp,
-
-    #[error("Duplicate attestation")]
-    DuplicateAttestation,
 }
 
 pub type Result<T> = std::result::Result<T, WitnessError>;

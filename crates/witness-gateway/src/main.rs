@@ -1,33 +1,38 @@
-mod admin;
-mod anchor_manager;
-mod anchor_providers;
-mod batch_manager;
-mod error;
-mod federation_client;
-mod freebird;
-mod http_client;
-mod metrics;
-mod real_ip;
-mod server;
-mod storage;
-mod traits;
-mod witness_client;
-
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use witness_core::NetworkConfig;
+use witness_gateway::{
+    admin::AdminState,
+    anchor_manager::AnchorManager,
+    batch_manager::BatchManager,
+    federation_client::FederationClient,
+    freebird::FreebirdClient,
+    metrics, reconciler,
+    server::GatewayServer,
+    storage::Storage,
+    witness_client::WitnessClient,
+};
 
-use admin::AdminState;
-use anchor_manager::AnchorManager;
-use batch_manager::BatchManager;
-use federation_client::FederationClient;
-use freebird::FreebirdClient;
-use server::GatewayServer;
-use storage::Storage;
-use witness_client::WitnessClient;
+fn is_non_loopback_host(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+    if host_lower == "localhost" {
+        return false;
+    }
+    if host_lower == "127.0.0.1" || host_lower == "::1" {
+        return false;
+    }
+    if let Ok(ip) = host.parse() {
+        return !is_loopback_ip(&ip);
+    }
+    true
+}
+
+fn is_loopback_ip(ip: &std::net::IpAddr) -> bool {
+    ip.is_loopback()
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "witness-gateway")]
@@ -265,6 +270,12 @@ async fn main() -> Result<()> {
         }
     });
 
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let cancel_clone = cancel.clone();
+    let reconciler_cancel = cancel.clone();
+    let reconciler = reconciler::Reconciler::new(storage.clone(), reconciler_cancel);
+    tokio::spawn(reconciler.run());
+
     // Start server
     let server = GatewayServer::new(
         network_config,
@@ -275,9 +286,91 @@ async fn main() -> Result<()> {
         args.metrics_token,
         args.behind_proxy,
     );
+
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            )
+            .expect("failed to install SIGTERM handler");
+
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received SIGINT, initiating graceful shutdown");
+                }
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM, initiating graceful shutdown");
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await;
+            tracing::info!("Received SIGINT, initiating graceful shutdown");
+        }
+
+        cancel_clone.cancel();
+    });
+
+    if is_non_loopback_host(&args.host) {
+        tracing::warn!(
+            "Gateway listening on non-loopback address {}. Traffic is unencrypted HTTP - ensure a TLS terminator (nginx, traefik, cloud load balancer) is in front.",
+            args.host
+        );
+        if !args.behind_proxy {
+            tracing::warn!(
+                "SECURITY: Gateway is not behind a proxy (--behind-proxy=false) and listening on non-loopback address {}. \
+                 X-Forwarded-For headers will not be trusted - clients may appear as 127.0.0.1.",
+                args.host
+            );
+        }
+    }
+
     server
-        .run(&args.host, args.port, admin_state, admin_api_key)
+        .run(&args.host, args.port, admin_state, admin_api_key, cancel)
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::is_non_loopback_host;
+
+    #[tokio::test]
+    async fn cancellation_token_triggers_on_signal() {
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.cancel();
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), cancel.cancelled())
+            .await
+            .expect("timed out waiting for cancellation");
+
+        assert!(cancel.is_cancelled());
+    }
+
+    #[test]
+    fn test_is_non_loopback_host() {
+        assert!(!is_non_loopback_host("127.0.0.1"));
+        assert!(!is_non_loopback_host("::1"));
+        assert!(!is_non_loopback_host("localhost"));
+        assert!(!is_non_loopback_host("LOCALHOST"));
+
+        assert!(is_non_loopback_host("0.0.0.0"));
+        assert!(is_non_loopback_host("::"));
+        assert!(is_non_loopback_host("192.168.1.1"));
+        assert!(is_non_loopback_host("10.0.0.1"));
+        assert!(is_non_loopback_host("172.16.0.1"));
+        assert!(is_non_loopback_host("public.example.com"));
+    }
 }

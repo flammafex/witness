@@ -86,10 +86,7 @@ impl AnchorProvider for InternetArchiveProvider {
                 let final_url = response.url().to_string();
 
                 if status.is_success() {
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    let timestamp = crate::epoch::epoch_secs();
 
                     let proof = ExternalAnchorProof {
                         provider: AnchorProviderType::InternetArchive,
@@ -202,10 +199,7 @@ impl AnchorProvider for EthereumProvider {
 
                 if let Some(receipt) = receipt {
                     if receipt.status == Some(U64::from(1)) {
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
+                        let timestamp = crate::epoch::epoch_secs();
 
                         let proof = ExternalAnchorProof {
                             provider: AnchorProviderType::Blockchain,
@@ -321,10 +315,7 @@ impl AnchorProvider for TrillianProvider {
                 if status.is_success() {
                     let result: serde_json::Value = response.json().await?;
 
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    let timestamp = crate::epoch::epoch_secs();
 
                     let proof = ExternalAnchorProof {
                         provider: AnchorProviderType::Trillian,
@@ -455,10 +446,7 @@ impl AnchorProvider for DnsTxtProvider {
                 let status = response.status();
 
                 if status.is_success() {
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    let timestamp = crate::epoch::epoch_secs();
 
                     let proof = ExternalAnchorProof {
                         provider: AnchorProviderType::DnsTxt,

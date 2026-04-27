@@ -2,7 +2,7 @@ use axum::{
     extract::{
         connect_info::ConnectInfo,
         ws::{CloseFrame, Message, WebSocket},
-        Request, State, WebSocketUpgrade,
+        DefaultBodyLimit, Request, State, WebSocketUpgrade,
     },
     http::{
         header::{AUTHORIZATION, WWW_AUTHENTICATE},
@@ -15,6 +15,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
+use dashmap::DashMap;
 use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::net::{IpAddr, SocketAddr};
@@ -22,6 +23,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
+use tower_http::cors::CorsLayer;
 use witness_core::{
     merkle::{consistency_path, inclusion_path},
     Attestation, BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
@@ -31,6 +33,7 @@ use witness_core::{
 };
 
 use crate::admin::{admin_router, AdminState};
+use crate::epoch::epoch_secs;
 use crate::error::AppError;
 use crate::freebird::FreebirdClient;
 use crate::metrics::{self, RequestTimer};
@@ -84,6 +87,7 @@ struct FederationState {
     witness_client: Arc<WitnessClient>,
     rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     behind_proxy: bool,
+    auth_store: Arc<FederationAuthStore>,
 }
 
 /// State for /metrics GET — only needs the handle and optional auth token.
@@ -108,6 +112,131 @@ struct AdminAuthState {
     api_key: Arc<str>,
     rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     behind_proxy: bool,
+}
+
+// ============================================================================
+// Federation auth token store
+// ============================================================================
+
+const FEDERATION_TOKEN_LIFETIME_SECS: u64 = 90 * 24 * 60 * 60;
+
+/// Entry for a federation auth token with expiry.
+#[derive(Clone)]
+struct TokenEntry {
+    token: String,
+    expires_at: u64,
+}
+
+/// In-memory store for federation auth tokens.
+///
+/// Supports per-partner token generation, automatic expiry of previous
+/// tokens when rotated, and periodic cleanup.
+#[derive(Clone)]
+pub struct FederationAuthStore {
+    current: DashMap<String, TokenEntry>,
+    expired: DashMap<String, TokenEntry>,
+}
+
+impl FederationAuthStore {
+    pub fn new() -> Self {
+        Self {
+            current: DashMap::new(),
+            expired: DashMap::new(),
+        }
+    }
+
+    /// Seed a current token from static configuration.
+    pub fn seed_current(&self, partner_id: &str, token: String) {
+        let entry = TokenEntry {
+            token,
+            expires_at: u64::MAX,
+        };
+        self.current.insert(partner_id.to_string(), entry);
+    }
+
+    /// Seed a previous (expired) token from static configuration.
+    pub fn seed_expired(&self, partner_id: &str, token: String, expires_at: u64) {
+        let entry = TokenEntry { token, expires_at };
+        self.expired.insert(partner_id.to_string(), entry);
+    }
+
+    /// Generate a new auth token for a partner.
+    ///
+    /// If a current token exists, it is moved to the expired map with
+    /// `expires_at = now` (immediately invalid).
+    pub fn generate_auth_token(&self, partner_id: &str) -> String {
+        let now = epoch_secs();
+        let token = generate_random_token();
+
+        if let Some((_, old)) = self.current.remove(partner_id) {
+            self.expired.insert(
+                partner_id.to_string(),
+                TokenEntry {
+                    token: old.token,
+                    expires_at: now,
+                },
+            );
+        }
+
+        let entry = TokenEntry {
+            token: token.clone(),
+            expires_at: now.saturating_add(FEDERATION_TOKEN_LIFETIME_SECS),
+        };
+        self.current.insert(partner_id.to_string(), entry);
+        token
+    }
+
+    /// Validate whether a token is current and not expired.
+    pub fn validate_auth_token(&self, token: &str) -> bool {
+        let now = epoch_secs();
+        for entry in self.current.iter() {
+            if entry.value().token == token && entry.value().expires_at > now {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if any current tokens are configured.
+    pub fn has_current_tokens(&self) -> bool {
+        !self.current.is_empty()
+    }
+
+    /// Remove all expired entries (both current and expired maps).
+    pub fn cleanup_expired(&self, now: u64) {
+        let before_current = self.current.len();
+        self.current.retain(|_, entry| entry.expires_at > now);
+        let after_current = self.current.len();
+        if before_current != after_current {
+            tracing::info!(
+                "Cleaned up {} expired current federation tokens",
+                before_current - after_current
+            );
+        }
+
+        let before_expired = self.expired.len();
+        self.expired.retain(|_, entry| entry.expires_at > now);
+        let after_expired = self.expired.len();
+        if before_expired != after_expired {
+            tracing::info!(
+                "Cleaned up {} expired previous federation tokens",
+                before_expired - after_expired
+            );
+        }
+    }
+}
+
+fn generate_random_token() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const TOKEN_LEN: usize = 64;
+    let mut rng = rand::thread_rng();
+    (0..TOKEN_LEN)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -151,6 +280,7 @@ impl GatewayServer {
         port: u16,
         admin_state: Option<AdminState>,
         admin_api_key: Option<String>,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
         let (event_tx, _) = broadcast::channel(256);
         let witness_client = Arc::new(WitnessClient::new());
@@ -174,6 +304,14 @@ impl GatewayServer {
             behind_proxy: self.behind_proxy,
         };
 
+        let auth_store = Arc::new(FederationAuthStore::new());
+        if let Some(token) = &self.config.federation.inbound_auth_token {
+            auth_store.seed_current("_default", token.clone());
+        }
+        if let Some(token) = &self.config.federation.previous_inbound_auth_token {
+            auth_store.seed_expired("_default", token.clone(), epoch_secs());
+        }
+
         let federation_state = FederationState {
             config: self.config.clone(),
             storage: self.storage.clone(),
@@ -182,7 +320,24 @@ impl GatewayServer {
                 NonZeroU32::new(10).unwrap(),
             ))),
             behind_proxy: self.behind_proxy,
+            auth_store: auth_store.clone(),
         };
+
+        let cleanup_store = auth_store;
+        let cleanup_cancel = cancel.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let now = epoch_secs();
+                        cleanup_store.cleanup_expired(now);
+                    }
+                    _ = cleanup_cancel.cancelled() => break,
+                }
+            }
+        });
 
         let metrics_state = MetricsState {
             handle: self.metrics_handle,
@@ -221,7 +376,9 @@ impl GatewayServer {
                 Router::new()
                     .route("/metrics", get(metrics_handler))
                     .with_state(metrics_state),
-            );
+            )
+            .layer(DefaultBodyLimit::max(65_536))
+            .layer(CorsLayer::permissive());
 
         if let Some(admin) = admin_state {
             let api_key = admin_api_key.ok_or_else(|| {
@@ -253,6 +410,7 @@ impl GatewayServer {
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
+        .with_graceful_shutdown(async move { cancel.cancelled().await })
         .await?;
         Ok(())
     }
@@ -443,7 +601,16 @@ async fn get_timestamp_handler(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    Ok(Json(TimestampResponse { attestation }))
+    let status = state
+        .storage
+        .get_attestation_status(&hash_array)
+        .await?
+        .unwrap_or_else(|| "confirmed".to_string());
+
+    Ok(Json(TimestampResponse {
+        attestation,
+        status,
+    }))
 }
 
 async fn verify_handler(
@@ -801,14 +968,40 @@ async fn timestamp_handler(
             .get_attestation(&hash)
             .await?
             .ok_or(AppError::InternalError)?;
-        return Ok(Json(TimestampResponse {
-            attestation: existing,
-        }));
+        let status = state
+            .storage
+            .get_attestation_status(&hash)
+            .await?
+            .unwrap_or_else(|| "confirmed".to_string());
+
+        if status == "pending" {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(TimestampResponse {
+                    attestation: existing,
+                    status: "pending".to_string(),
+                }),
+            ));
+        }
+
+        return Ok((
+            StatusCode::OK,
+            Json(TimestampResponse {
+                attestation: existing,
+                status: "confirmed".to_string(),
+            }),
+        ));
     }
 
     let sequence = state.storage.get_next_sequence(&state.config.id).await?;
     let attestation = Attestation::new(hash, state.config.id.clone(), sequence);
     tracing::debug!("Created attestation: {}", attestation);
+
+    let signed = SignedAttestation::new(attestation.clone());
+    state
+        .storage
+        .store_attestation(&signed, Some("pending"))
+        .await?;
 
     let responses = collect_signatures_until_threshold(
         &state.config.witnesses,
@@ -870,7 +1063,8 @@ async fn timestamp_handler(
         })?;
     tracing::info!("Verified {} signatures", verified_count);
 
-    state.storage.store_attestation(&signed).await?;
+    state.storage.store_attestation(&signed, None).await?;
+    state.storage.confirm_attestation(&hash).await?;
     metrics::record_attestation();
 
     tracing::info!(
@@ -886,9 +1080,13 @@ async fn timestamp_handler(
     };
     let _ = state.event_tx.send(event);
 
-    Ok(Json(TimestampResponse {
-        attestation: signed,
-    }))
+    Ok((
+        StatusCode::CREATED,
+        Json(TimestampResponse {
+            attestation: signed,
+            status: "confirmed".to_string(),
+        }),
+    ))
 }
 
 // ============================================================================
@@ -901,13 +1099,10 @@ async fn federation_anchor_handler(
     headers: axum::http::HeaderMap,
     Json(request): Json<CrossAnchorRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let expected_token = match &state.config.federation.inbound_auth_token {
-        Some(token) => token,
-        None => {
-            tracing::warn!("Rejected federation request: inbound_auth_token not configured");
-            return Err(AppError::Unauthorized);
-        }
-    };
+    if !state.auth_store.has_current_tokens() {
+        tracing::warn!("Rejected federation request: inbound_auth_token not configured");
+        return Err(AppError::Unauthorized);
+    }
 
     let provided = headers
         .get(AUTHORIZATION)
@@ -915,27 +1110,7 @@ async fn federation_anchor_handler(
         .and_then(|v| v.strip_prefix("Bearer "));
 
     match provided {
-        Some(token)
-            if witness_core::constant_time_eq(token, expected_token)
-                || state
-                    .config
-                    .federation
-                    .previous_inbound_auth_token
-                    .as_deref()
-                    .is_some_and(|prev| witness_core::constant_time_eq(token, prev)) =>
-        {
-            if state
-                .config
-                .federation
-                .previous_inbound_auth_token
-                .as_deref()
-                .is_some_and(|prev| witness_core::constant_time_eq(token, prev))
-            {
-                tracing::warn!(
-                    "Federation request authenticated with previous token — rotate soon"
-                );
-            }
-        }
+        Some(token) if state.auth_store.validate_auth_token(token) => {}
         _ => {
             tracing::warn!("Rejected unauthenticated federation anchor request");
             return Err(AppError::Unauthorized);
@@ -1014,10 +1189,7 @@ async fn federation_anchor_handler(
         AppError::InvalidSignature
     })?;
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let timestamp = epoch_secs();
 
     let cross_anchor = witness_core::CrossAnchor {
         batch: request.batch,
@@ -1150,4 +1322,165 @@ async fn handle_ws_connection(
 
     send_task.abort();
     tracing::info!("WebSocket client disconnected");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        extract::DefaultBodyLimit,
+        routing::post,
+        Router,
+    };
+    use tower::Service;
+
+    #[tokio::test]
+    async fn body_limit_rejects_oversized_payload() {
+        let app = Router::new()
+            .route("/test", post(|_body: Json<serde_json::Value>| async { "ok" }))
+            .layer(DefaultBodyLimit::max(65_536));
+
+        let large_payload = serde_json::json!({
+            "data": "x".repeat(70_000)
+        });
+        let body = Body::from(large_payload.to_string());
+
+        let mut app = app;
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn body_limit_accepts_sized_payload() {
+        let app = Router::new()
+            .route("/test", post(|_body: Json<serde_json::Value>| async { "ok" }))
+            .layer(DefaultBodyLimit::max(65_536));
+
+        let small_payload = serde_json::json!({
+            "hash": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+        });
+        let body = Body::from(small_payload.to_string());
+
+        let mut app = app;
+        let response = app
+            .call(
+                Request::builder()
+                    .method("POST")
+                    .uri("/test")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_returns_allow_origin_header() {
+        let app = Router::new()
+            .route("/v1/config", get(|| async { "ok" }))
+            .layer(CorsLayer::permissive());
+
+        let mut app = app;
+        let response = app
+            .call(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/v1/config")
+                    .header("Access-Control-Request-Method", "GET")
+                    .header("Access-Control-Request-Headers", "origin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers().contains_key("access-control-allow-origin"),
+            "Preflight response must include Access-Control-Allow-Origin header"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_get_with_origin_returns_allow_origin_header() {
+        let app = Router::new()
+            .route("/v1/config", get(|| async { "ok" }))
+            .layer(CorsLayer::permissive());
+
+        let mut app = app;
+        let response = app
+            .call(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/config")
+                    .header("Origin", "http://example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers().contains_key("access-control-allow-origin"),
+            "GET response with Origin header must include Access-Control-Allow-Origin"
+        );
+    }
+
+    #[test]
+    fn federation_old_token_invalidated_on_rotation() {
+        let store = FederationAuthStore::new();
+        let partner = "peer-network-1";
+
+        let token_a = store.generate_auth_token(partner);
+        assert!(store.validate_auth_token(&token_a), "initial token should be valid");
+
+        let token_b = store.generate_auth_token(partner);
+        assert!(
+            !store.validate_auth_token(&token_a),
+            "old token should be invalidated after rotation"
+        );
+        assert!(store.validate_auth_token(&token_b), "new token should be valid");
+    }
+
+    #[test]
+    fn federation_expired_tokens_cleaned_up() {
+        let store = FederationAuthStore::new();
+        let partner = "peer-network-1";
+
+        let token_a = store.generate_auth_token(partner);
+        let _token_b = store.generate_auth_token(partner);
+
+        assert!(store.expired.contains_key(partner), "old token should be in expired map");
+
+        store.cleanup_expired(epoch_secs());
+
+        assert!(
+            !store.expired.contains_key(partner),
+            "expired token should be cleaned up"
+        );
+        assert!(
+            store.current.contains_key(partner),
+            "current token should remain after cleanup"
+        );
+        assert!(
+            !store.validate_auth_token(&token_a),
+            "cleaned-up old token should no longer validate"
+        );
+    }
 }

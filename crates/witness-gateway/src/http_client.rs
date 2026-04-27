@@ -4,9 +4,11 @@ use std::net::IpAddr;
 /// Build a hardened reqwest Client.
 /// Sets https_only unless allow_http is true (for dev/testing only).
 pub fn build_client(allow_http: bool) -> reqwest::Client {
+    let resolver = std::sync::Arc::new(crate::dns_resolver::SafeResolver::new());
     reqwest::Client::builder()
         .https_only(!allow_http)
         .timeout(std::time::Duration::from_secs(10))
+        .dns_resolver(resolver)
         .build()
         .expect("Failed to build HTTP client")
 }

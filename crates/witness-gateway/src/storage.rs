@@ -9,8 +9,19 @@ use witness_core::{
     ExternalAnchorProof, SignedAttestation, SignedTreeHead, TreeHead, WitnessSignature,
 };
 
+use crate::epoch::epoch_secs;
+
 pub struct Storage {
     pool: SqlitePool,
+}
+
+/// Cached log state for O(1) STH computation.
+#[derive(Debug, Clone)]
+pub struct LogState {
+    pub network_id: String,
+    pub current_root: [u8; 32],
+    pub tree_size: u64,
+    pub updated_at: u64,
 }
 
 impl Storage {
@@ -19,7 +30,10 @@ impl Storage {
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .create_if_missing(true);
-        let pool = SqlitePool::connect_with(opts).await?;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(opts)
+            .await?;
         Ok(Self { pool })
     }
 
@@ -69,8 +83,9 @@ impl Storage {
             let mut tx = self.pool.begin().await?;
 
             sqlx::query(
-                r#"INSERT OR IGNORE INTO aggregated_signatures (hash, signature, scheme)
-                   VALUES (?1, ?2, 'bls')"#,
+                r#"INSERT INTO aggregated_signatures (hash, signature, scheme)
+                   VALUES (?1, ?2, 'bls')
+                   ON CONFLICT(hash) DO NOTHING"#,
             )
             .bind(&hash)
             .bind(&signature)
@@ -79,8 +94,9 @@ impl Storage {
 
             for (position, signer) in signers.iter().enumerate() {
                 sqlx::query(
-                    r#"INSERT OR IGNORE INTO aggregated_signers (hash, witness_id, position)
-                       VALUES (?1, ?2, ?3)"#,
+                    r#"INSERT INTO aggregated_signers (hash, witness_id, position)
+                       VALUES (?1, ?2, ?3)
+                       ON CONFLICT(hash, witness_id) DO NOTHING"#,
                 )
                 .bind(&hash)
                 .bind(signer)
@@ -143,26 +159,28 @@ impl Storage {
         })
     }
 
-    pub async fn store_attestation(&self, signed: &SignedAttestation) -> Result<()> {
+    pub async fn store_attestation(
+        &self,
+        signed: &SignedAttestation,
+        status: Option<&str>,
+    ) -> Result<()> {
         let hash_hex = hex::encode(signed.attestation.hash);
+        let status = status.unwrap_or("confirmed");
 
         // Store attestation
         sqlx::query(
             r#"
-            INSERT OR IGNORE INTO attestations (hash, timestamp, network_id, sequence, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO attestations (hash, timestamp, network_id, sequence, created_at, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(hash) DO NOTHING
             "#,
         )
         .bind(&hash_hex)
         .bind(signed.attestation.timestamp as i64)
         .bind(&signed.attestation.network_id)
         .bind(signed.attestation.sequence as i64)
-        .bind(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        )
+        .bind(epoch_secs() as i64)
+        .bind(status)
         .execute(&self.pool)
         .await?;
 
@@ -173,8 +191,9 @@ impl Storage {
                 for sig in signatures {
                     sqlx::query(
                         r#"
-                        INSERT OR IGNORE INTO signatures (hash, witness_id, signature)
+                        INSERT INTO signatures (hash, witness_id, signature)
                         VALUES (?1, ?2, ?3)
+                        ON CONFLICT(hash, witness_id) DO NOTHING
                         "#,
                     )
                     .bind(&hash_hex)
@@ -186,8 +205,9 @@ impl Storage {
             }
             AttestationSignatures::Aggregated { signature, signers } => {
                 sqlx::query(
-                    r#"INSERT OR IGNORE INTO aggregated_signatures (hash, signature, scheme)
-                       VALUES (?1, ?2, 'bls')"#,
+                    r#"INSERT INTO aggregated_signatures (hash, signature, scheme)
+                       VALUES (?1, ?2, 'bls')
+                       ON CONFLICT(hash) DO NOTHING"#,
                 )
                 .bind(&hash_hex)
                 .bind(signature)
@@ -196,8 +216,9 @@ impl Storage {
 
                 for (position, signer) in signers.iter().enumerate() {
                     sqlx::query(
-                        r#"INSERT OR IGNORE INTO aggregated_signers (hash, witness_id, position)
-                           VALUES (?1, ?2, ?3)"#,
+                        r#"INSERT INTO aggregated_signers (hash, witness_id, position)
+                           VALUES (?1, ?2, ?3)
+                           ON CONFLICT(hash, witness_id) DO NOTHING"#,
                     )
                     .bind(&hash_hex)
                     .bind(signer)
@@ -232,7 +253,9 @@ impl Storage {
 
         let hash_str: String = row.get("hash");
         let hash_bytes = hex::decode(hash_str)?;
-        let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+        let hash_array: [u8; 32] = hash_bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid hash length in database"))?;
 
         let attestation = Attestation {
             hash: hash_array,
@@ -247,6 +270,126 @@ impl Storage {
             attestation,
             signatures,
         }))
+    }
+
+    pub async fn get_attestation_status(&self, hash: &[u8; 32]) -> Result<Option<String>> {
+        let hash_hex = hex::encode(hash);
+
+        let row = sqlx::query(
+            r#"
+            SELECT status FROM attestations WHERE hash = ?1
+            "#,
+        )
+        .bind(&hash_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get::<String, _>("status")))
+    }
+
+    pub async fn get_pending_attestations(&self) -> Result<Vec<SignedAttestation>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT hash, timestamp, network_id, sequence
+            FROM attestations
+            WHERE status = 'pending'
+            ORDER BY sequence ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut attestations = Vec::new();
+
+        for row in rows {
+            let hash_str: String = row.get("hash");
+            let hash_bytes = hex::decode(&hash_str)?;
+            let hash_array: [u8; 32] = hash_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid hash length in database"))?;
+
+            let attestation = Attestation {
+                hash: hash_array,
+                timestamp: row.get::<i64, _>("timestamp") as u64,
+                network_id: row.get("network_id"),
+                sequence: row.get::<i64, _>("sequence") as u64,
+            };
+
+            let signatures = self.read_signatures(&hash_str).await?;
+
+            attestations.push(SignedAttestation {
+                attestation,
+                signatures,
+            });
+        }
+
+        Ok(attestations)
+    }
+
+    pub async fn confirm_attestation(&self, hash: &[u8; 32]) -> Result<()> {
+        let hash_hex = hex::encode(hash);
+
+        sqlx::query(
+            r#"
+            UPDATE attestations SET status = 'confirmed' WHERE hash = ?1
+            "#,
+        )
+        .bind(&hash_hex)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_log_state(&self, network_id: &str) -> Result<Option<LogState>> {
+        let row = sqlx::query(
+            r#"
+            SELECT current_root, tree_size, updated_at
+            FROM log_state
+            WHERE network_id = ?1
+            "#,
+        )
+        .bind(network_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let root_vec: Vec<u8> = row.get("current_root");
+        let current_root: [u8; 32] = root_vec
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid root length in database"))?;
+
+        Ok(Some(LogState {
+            network_id: network_id.to_string(),
+            current_root,
+            tree_size: row.get::<i64, _>("tree_size") as u64,
+            updated_at: row.get::<i64, _>("updated_at") as u64,
+        }))
+    }
+
+    pub async fn update_log_state(
+        &self,
+        network_id: &str,
+        root: &[u8; 32],
+        tree_size: u64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO log_state (network_id, current_root, tree_size, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            "#,
+        )
+        .bind(network_id)
+        .bind(&root[..])
+        .bind(tree_size as i64)
+        .bind(epoch_secs() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     pub async fn get_next_sequence(&self, network_id: &str) -> Result<u64> {
@@ -291,32 +434,57 @@ impl Storage {
     pub async fn get_unbatched_attestations(&self, since: u64) -> Result<Vec<SignedAttestation>> {
         let rows = sqlx::query(
             r#"
-            SELECT hash, timestamp, network_id, sequence
-            FROM attestations
-            WHERE batch_id IS NULL AND timestamp >= ?1
-            ORDER BY sequence ASC
+            SELECT a.hash, a.timestamp, a.network_id, a.sequence, a.status,
+                   s.witness_id, s.signature
+            FROM attestations a
+            LEFT JOIN signatures s ON s.hash = a.hash
+            WHERE a.batch_id IS NULL AND a.timestamp >= ?1 AND a.status = 'confirmed'
+            ORDER BY a.sequence ASC
             "#,
         )
         .bind(since as i64)
         .fetch_all(&self.pool)
         .await?;
 
-        let mut attestations = Vec::new();
+        let mut groups: Vec<(Attestation, Vec<WitnessSignature>, String)> = Vec::new();
+        let mut hash_to_index: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
-        for row in rows {
+        for row in &rows {
             let hash_str: String = row.get("hash");
-            let hash_bytes = hex::decode(&hash_str)?;
-            let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+            if let Some(&idx) = hash_to_index.get(&hash_str) {
+                if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
+                    let signature: Vec<u8> = row.get("signature");
+                    groups[idx].1.push(WitnessSignature { witness_id, signature });
+                }
+            } else {
+                let hash_bytes = hex::decode(&hash_str)?;
+                let hash_array: [u8; 32] = hash_bytes
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid hash length in database"))?;
+                let attestation = Attestation {
+                    hash: hash_array,
+                    timestamp: row.get::<i64, _>("timestamp") as u64,
+                    network_id: row.get("network_id"),
+                    sequence: row.get::<i64, _>("sequence") as u64,
+                };
+                let mut sigs = Vec::new();
+                if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
+                    let signature: Vec<u8> = row.get("signature");
+                    sigs.push(WitnessSignature { witness_id, signature });
+                }
+                hash_to_index.insert(hash_str.clone(), groups.len());
+                groups.push((attestation, sigs, hash_str));
+            }
+        }
 
-            let attestation = Attestation {
-                hash: hash_array,
-                timestamp: row.get::<i64, _>("timestamp") as u64,
-                network_id: row.get("network_id"),
-                sequence: row.get::<i64, _>("sequence") as u64,
+        let mut attestations = Vec::new();
+        for (attestation, sigs, hash_str) in groups {
+            let signatures = if sigs.is_empty() {
+                self.read_signatures(&hash_str).await?
+            } else {
+                AttestationSignatures::MultiSig { signatures: sigs }
             };
-
-            let signatures = self.read_signatures(&hash_str).await?;
-
             attestations.push(SignedAttestation {
                 attestation,
                 signatures,
@@ -347,12 +515,7 @@ impl Storage {
         .bind(batch.period_start as i64)
         .bind(batch.period_end as i64)
         .bind(batch.attestation_count as i64)
-        .bind(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        )
+        .bind(epoch_secs() as i64)
         .execute(&mut *tx)
         .await?;
 
@@ -406,7 +569,9 @@ impl Storage {
         };
 
         let merkle_root_vec: Vec<u8> = row.get("merkle_root");
-        let merkle_root: [u8; 32] = merkle_root_vec.try_into().unwrap();
+        let merkle_root: [u8; 32] = merkle_root_vec
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid merkle_root length in database"))?;
 
         Ok(Some(AttestationBatch {
             id: row.get::<i64, _>("id") as u64,
@@ -507,12 +672,7 @@ impl Storage {
         .bind(&cross_anchor.witnessing_network)
         .bind(&witness_attestation_json)
         .bind(cross_anchor.timestamp as i64)
-        .bind(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        )
+        .bind(epoch_secs() as i64)
         .execute(&self.pool)
         .await?;
 
@@ -582,12 +742,7 @@ impl Storage {
         .bind(&sth.tree_head.root_hash[..])
         .bind(batch_id)
         .bind(&signed_json)
-        .bind(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        )
+        .bind(epoch_secs() as i64)
         .execute(&self.pool)
         .await?;
 
@@ -748,12 +903,7 @@ impl Storage {
         .bind(proof.timestamp as i64)
         .bind(&proof_json)
         .bind(proof.anchored_data.as_deref())
-        .bind(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        )
+        .bind(epoch_secs() as i64)
         .execute(&self.pool)
         .await?;
 
@@ -840,9 +990,11 @@ impl Storage {
     pub async fn get_recent_attestations(&self, limit: usize) -> Result<Vec<SignedAttestation>> {
         let rows = sqlx::query(
             r#"
-            SELECT hash, timestamp, network_id, sequence
-            FROM attestations
-            ORDER BY timestamp DESC, sequence DESC
+            SELECT a.hash, a.timestamp, a.network_id, a.sequence, a.status,
+                   s.witness_id, s.signature
+            FROM attestations a
+            LEFT JOIN signatures s ON s.hash = a.hash
+            ORDER BY a.timestamp DESC, a.sequence DESC
             LIMIT ?1
             "#,
         )
@@ -850,22 +1002,45 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut attestations = Vec::new();
+        let mut groups: Vec<(Attestation, Vec<WitnessSignature>, String)> = Vec::new();
+        let mut hash_to_index: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
-        for row in rows {
+        for row in &rows {
             let hash_str: String = row.get("hash");
-            let hash_bytes = hex::decode(&hash_str)?;
-            let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
+            if let Some(&idx) = hash_to_index.get(&hash_str) {
+                if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
+                    let signature: Vec<u8> = row.get("signature");
+                    groups[idx].1.push(WitnessSignature { witness_id, signature });
+                }
+            } else {
+                let hash_bytes = hex::decode(&hash_str)?;
+                let hash_array: [u8; 32] = hash_bytes
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Invalid hash length in database"))?;
+                let attestation = Attestation {
+                    hash: hash_array,
+                    timestamp: row.get::<i64, _>("timestamp") as u64,
+                    network_id: row.get("network_id"),
+                    sequence: row.get::<i64, _>("sequence") as u64,
+                };
+                let mut sigs = Vec::new();
+                if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
+                    let signature: Vec<u8> = row.get("signature");
+                    sigs.push(WitnessSignature { witness_id, signature });
+                }
+                hash_to_index.insert(hash_str.clone(), groups.len());
+                groups.push((attestation, sigs, hash_str));
+            }
+        }
 
-            let attestation = Attestation {
-                hash: hash_array,
-                timestamp: row.get::<i64, _>("timestamp") as u64,
-                network_id: row.get("network_id"),
-                sequence: row.get::<i64, _>("sequence") as u64,
+        let mut attestations = Vec::new();
+        for (attestation, sigs, hash_str) in groups {
+            let signatures = if sigs.is_empty() {
+                self.read_signatures(&hash_str).await?
+            } else {
+                AttestationSignatures::MultiSig { signatures: sigs }
             };
-
-            let signatures = self.read_signatures(&hash_str).await?;
-
             attestations.push(SignedAttestation {
                 attestation,
                 signatures,
@@ -940,7 +1115,7 @@ mod tests {
         let signed = create_test_attestation(hash, 1);
 
         // Store
-        storage.store_attestation(&signed).await.unwrap();
+        storage.store_attestation(&signed, None).await.unwrap();
 
         // Retrieve
         let retrieved = storage.get_attestation(&hash).await.unwrap();
@@ -983,7 +1158,7 @@ mod tests {
         };
 
         // Store
-        storage.store_attestation(&signed).await.unwrap();
+        storage.store_attestation(&signed, None).await.unwrap();
 
         // Retrieve
         let retrieved = storage.get_attestation(&hash).await.unwrap().unwrap();
@@ -1010,7 +1185,7 @@ mod tests {
 
         // Store attestation
         let signed = create_test_attestation(hash, 1);
-        storage.store_attestation(&signed).await.unwrap();
+        storage.store_attestation(&signed, None).await.unwrap();
 
         // Now it's a duplicate
         assert!(storage.check_duplicate(&hash).await.unwrap());
@@ -1045,7 +1220,7 @@ mod tests {
             hash[0] = i;
             let mut signed = create_test_attestation(hash, i as u64);
             signed.attestation.timestamp = 1700000000 + (i as u64 * 100);
-            storage.store_attestation(&signed).await.unwrap();
+            storage.store_attestation(&signed, None).await.unwrap();
         }
 
         // Count all
@@ -1068,7 +1243,7 @@ mod tests {
             hash[0] = i;
             hashes.push(hash);
             let signed = create_test_attestation(hash, i as u64);
-            storage.store_attestation(&signed).await.unwrap();
+            storage.store_attestation(&signed, None).await.unwrap();
         }
 
         // Create batch
@@ -1105,7 +1280,7 @@ mod tests {
         // Store attestation
         let hash = [99u8; 32];
         let signed = create_test_attestation(hash, 1);
-        storage.store_attestation(&signed).await.unwrap();
+        storage.store_attestation(&signed, None).await.unwrap();
 
         // Not batched yet
         let info = storage
@@ -1158,7 +1333,7 @@ mod tests {
             let mut hash = [0u8; 32];
             hash[0] = i;
             let signed = create_test_attestation(hash, i as u64);
-            storage.store_attestation(&signed).await.unwrap();
+            storage.store_attestation(&signed, None).await.unwrap();
         }
 
         assert_eq!(storage.count_attestations().await.unwrap(), 3);
@@ -1173,7 +1348,7 @@ mod tests {
         // Store attestation and batch
         let hash = [1u8; 32];
         let signed = create_test_attestation(hash, 1);
-        storage.store_attestation(&signed).await.unwrap();
+        storage.store_attestation(&signed, None).await.unwrap();
 
         let batch = AttestationBatch {
             id: 0,
@@ -1186,5 +1361,67 @@ mod tests {
         storage.store_batch(&batch, &[hash]).await.unwrap();
 
         assert_eq!(storage.count_batches().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_store_attestation_with_pending_status() {
+        let storage = setup_test_db().await;
+
+        let hash = [7u8; 32];
+        let signed = create_test_attestation(hash, 1);
+
+        storage.store_attestation(&signed, Some("pending")).await.unwrap();
+
+        let status = storage.get_attestation_status(&hash).await.unwrap();
+        assert_eq!(status, Some("pending".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_attestation() {
+        let storage = setup_test_db().await;
+
+        let hash = [8u8; 32];
+        let signed = create_test_attestation(hash, 1);
+
+        storage.store_attestation(&signed, Some("pending")).await.unwrap();
+        let status = storage.get_attestation_status(&hash).await.unwrap();
+        assert_eq!(status, Some("pending".to_string()));
+
+        storage.confirm_attestation(&hash).await.unwrap();
+        let status = storage.get_attestation_status(&hash).await.unwrap();
+        assert_eq!(status, Some("confirmed".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_pending_attestations() {
+        let storage = setup_test_db().await;
+
+        let pending_hash = [9u8; 32];
+        let confirmed_hash = [10u8; 32];
+
+        let pending_signed = create_test_attestation(pending_hash, 1);
+        let confirmed_signed = create_test_attestation(confirmed_hash, 2);
+
+        storage
+            .store_attestation(&pending_signed, Some("pending"))
+            .await
+            .unwrap();
+        storage
+            .store_attestation(&confirmed_signed, Some("confirmed"))
+            .await
+            .unwrap();
+
+        let pending = storage.get_pending_attestations().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].attestation.hash, pending_hash);
+    }
+
+    #[tokio::test]
+    async fn test_get_attestation_status_not_found() {
+        let storage = setup_test_db().await;
+
+        let hash = [11u8; 32];
+        let status = storage.get_attestation_status(&hash).await.unwrap();
+        assert_eq!(status, None);
     }
 }

@@ -8,6 +8,7 @@ use witness_core::{
 };
 
 use crate::anchor_manager::AnchorManager;
+use crate::epoch::epoch_secs;
 use crate::federation_client::FederationClient;
 use crate::metrics;
 use crate::server::collect_signatures_until_threshold;
@@ -30,10 +31,7 @@ impl BatchManager {
         storage: Arc<Storage>,
         witness_client: Arc<WitnessClient>,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = epoch_secs();
 
         Self {
             config,
@@ -87,10 +85,7 @@ impl BatchManager {
     /// Close the current batch and create a new one
     async fn close_batch(&self) -> anyhow::Result<Option<AttestationBatch>> {
         let mut last_batch_time = self.last_batch_time.lock().await;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = epoch_secs();
 
         // Get all unbatched attestations since last batch
         let attestations = self
@@ -128,6 +123,17 @@ impl BatchManager {
 
         // Store batch
         let batch_id = self.storage.store_batch(&batch, &leaves).await?;
+
+        // Confirm all attestations in the batch (defensive: they should already be confirmed)
+        for attestation in &attestations {
+            if let Err(e) = self.storage.confirm_attestation(&attestation.attestation.hash).await {
+                tracing::warn!(
+                    "Failed to confirm attestation {} in batch: {}",
+                    hex::encode(&attestation.attestation.hash),
+                    e
+                );
+            }
+        }
 
         // Record metrics
         metrics::record_batch();
