@@ -455,7 +455,10 @@ impl Storage {
             if let Some(&idx) = hash_to_index.get(&hash_str) {
                 if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
                     let signature: Vec<u8> = row.get("signature");
-                    groups[idx].1.push(WitnessSignature { witness_id, signature });
+                    groups[idx].1.push(WitnessSignature {
+                        witness_id,
+                        signature,
+                    });
                 }
             } else {
                 let hash_bytes = hex::decode(&hash_str)?;
@@ -471,7 +474,10 @@ impl Storage {
                 let mut sigs = Vec::new();
                 if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
                     let signature: Vec<u8> = row.get("signature");
-                    sigs.push(WitnessSignature { witness_id, signature });
+                    sigs.push(WitnessSignature {
+                        witness_id,
+                        signature,
+                    });
                 }
                 hash_to_index.insert(hash_str.clone(), groups.len());
                 groups.push((attestation, sigs, hash_str));
@@ -797,7 +803,10 @@ impl Storage {
         Self::row_to_sth(network_id, row)
     }
 
-    fn row_to_sth(network_id: &str, row: sqlx::sqlite::SqliteRow) -> Result<Option<SignedTreeHead>> {
+    fn row_to_sth(
+        network_id: &str,
+        row: sqlx::sqlite::SqliteRow,
+    ) -> Result<Option<SignedTreeHead>> {
         let tree_size: i64 = row.get("tree_size");
         let timestamp: i64 = row.get("timestamp");
         let root_vec: Vec<u8> = row.get("root_hash");
@@ -1011,7 +1020,10 @@ impl Storage {
             if let Some(&idx) = hash_to_index.get(&hash_str) {
                 if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
                     let signature: Vec<u8> = row.get("signature");
-                    groups[idx].1.push(WitnessSignature { witness_id, signature });
+                    groups[idx].1.push(WitnessSignature {
+                        witness_id,
+                        signature,
+                    });
                 }
             } else {
                 let hash_bytes = hex::decode(&hash_str)?;
@@ -1027,7 +1039,10 @@ impl Storage {
                 let mut sigs = Vec::new();
                 if let Some(witness_id) = row.try_get::<Option<String>, _>("witness_id")? {
                     let signature: Vec<u8> = row.get("signature");
-                    sigs.push(WitnessSignature { witness_id, signature });
+                    sigs.push(WitnessSignature {
+                        witness_id,
+                        signature,
+                    });
                 }
                 hash_to_index.insert(hash_str.clone(), groups.len());
                 groups.push((attestation, sigs, hash_str));
@@ -1370,7 +1385,10 @@ mod tests {
         let hash = [7u8; 32];
         let signed = create_test_attestation(hash, 1);
 
-        storage.store_attestation(&signed, Some("pending")).await.unwrap();
+        storage
+            .store_attestation(&signed, Some("pending"))
+            .await
+            .unwrap();
 
         let status = storage.get_attestation_status(&hash).await.unwrap();
         assert_eq!(status, Some("pending".to_string()));
@@ -1383,7 +1401,10 @@ mod tests {
         let hash = [8u8; 32];
         let signed = create_test_attestation(hash, 1);
 
-        storage.store_attestation(&signed, Some("pending")).await.unwrap();
+        storage
+            .store_attestation(&signed, Some("pending"))
+            .await
+            .unwrap();
         let status = storage.get_attestation_status(&hash).await.unwrap();
         assert_eq!(status, Some("pending".to_string()));
 

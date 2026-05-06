@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use witness_auditor::{audit, storage};
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 use tracing::{error, info};
+use witness_auditor::{audit, storage};
 
 use audit::{Auditor, TickResult};
 use storage::Storage;
@@ -17,7 +17,12 @@ struct Cli {
     gateway: String,
 
     /// SQLite database path for auditor state
-    #[arg(short, long, default_value = "witness-auditor.db", env = "WITNESS_AUDITOR_DB")]
+    #[arg(
+        short,
+        long,
+        default_value = "witness-auditor.db",
+        env = "WITNESS_AUDITOR_DB"
+    )]
     database: String,
 
     #[command(subcommand)]
@@ -107,10 +112,7 @@ async fn main() -> Result<()> {
                 println!("Latest recorded STH for {}", cli.gateway);
                 println!("  Tree size:  {}", sth.tree_head.tree_size);
                 println!("  Timestamp:  {}", sth.tree_head.timestamp);
-                println!(
-                    "  Root hash:  {}",
-                    hex::encode(sth.tree_head.root_hash)
-                );
+                println!("  Root hash:  {}", hex::encode(sth.tree_head.root_hash));
             } else {
                 println!("No recorded STH for {}", cli.gateway);
             }

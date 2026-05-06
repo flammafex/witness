@@ -15,6 +15,17 @@ Witness lets a federation of independent operators co-sign that a hash existed a
 - **Privacy:** Only hashes are submitted, not content
 - **Sybil Resistance:** Optional [Freebird](https://git.carpocratian.org/sibyl/freebird) integration for anonymous rate limiting
 
+## Project Documents
+
+- [Security Policy](SECURITY.md): vulnerability reporting, production baseline, and known limitations.
+- [Threat Model](docs/threat-model.md): security goals, assumptions, non-goals, actors, and current gaps.
+- [Production Deployment](PRODUCTION.md): gateway deployment, TLS/proxy setup, monitoring, backups, and upgrades.
+- [Release Packaging](docs/release.md): release artifacts, checksums, container tags, and pre-tag checklist.
+- [Freebird Integration](docs/freebird-integration.md): current verifier contract and public-gateway abuse-control guidance.
+- [Testing Guide](TESTING.md): local, unit, integration, and manual test workflows.
+- [Contributing](CONTRIBUTING.md): development checks and security-sensitive change guidance.
+- [Changelog](CHANGELOG.md): release notes and compatibility changes.
+
 ## Quick Start
 
 ### Docker (Recommended)
@@ -194,16 +205,23 @@ Anonymous rate limiting without user tracking:
 
 ```bash
 # Gateway configuration
-export FREEBIRD_VERIFIER_URL=http://localhost:8082
-export FREEBIRD_ISSUER_IDS=issuer:prod:v1
+export FREEBIRD_VERIFIER_URL=https://freebird-verifier.example.org
 export FREEBIRD_REQUIRED=true  # Reject requests without valid tokens
 export FREEBIRD_CONSUME_TOKENS=true  # Default: consume tokens via /v1/verify (recommended)
 
 # CLI usage
-witness timestamp --file doc.pdf --freebird-acquire http://localhost:8081
+witness timestamp --file doc.pdf --freebird-token token.json
+```
+
+`token.json` uses the current Freebird verifier token shape:
+
+```json
+{"token_b64":"<base64url-freebird-token>"}
 ```
 
 `FREEBIRD_CONSUME_TOKENS=false` switches to non-consuming `/v1/check` mode. This allows token reuse until expiry and should only be used for explicit proof-of-possession flows with strict rate limiting.
+
+For local integration tests only, `FREEBIRD_ALLOW_INSECURE_LOCAL=true` permits a plaintext loopback verifier URL such as `http://127.0.0.1:8082`. Do not set it for public deployments.
 
 ### Admin Dashboard Auth
 

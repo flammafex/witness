@@ -47,7 +47,11 @@ impl Reconciler {
     }
 
     async fn reconcile_once(&self) -> anyhow::Result<()> {
-        // TODO: Implement federation partner STH reconciliation.
+        let attestation_count = self.storage.count_attestations().await?;
+        tracing::debug!(
+            attestation_count,
+            "STH reconciliation placeholder completed"
+        );
         Ok(())
     }
 }

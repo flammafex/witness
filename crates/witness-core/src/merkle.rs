@@ -277,7 +277,9 @@ pub fn verify_consistency(
 
     // Step 1: prepend first_hash if first is an exact power of 2.
     let path: Vec<[u8; 32]> = if first.is_power_of_two() {
-        std::iter::once(*first_hash).chain(proof.iter().copied()).collect()
+        std::iter::once(*first_hash)
+            .chain(proof.iter().copied())
+            .collect()
     } else {
         proof.to_vec()
     };
@@ -415,10 +417,10 @@ mod tests {
             let tree = MerkleTree::new(leaves.clone());
             let root = tree.root();
 
-            for i in 0..n {
+            for (i, leaf) in leaves.iter().enumerate().take(n) {
                 let proof = tree.inclusion_proof(i).expect("proof exists");
                 assert!(
-                    verify_inclusion(&leaves[i], i as u64, n as u64, &proof.siblings, &root),
+                    verify_inclusion(leaf, i as u64, n as u64, &proof.siblings, &root),
                     "proof for leaf {i} of size {n} failed"
                 );
             }

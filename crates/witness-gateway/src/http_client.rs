@@ -41,6 +41,34 @@ pub fn validate_outbound_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate a URL for explicitly enabled local development integration tests.
+///
+/// This permits only plaintext loopback URLs. It is intentionally narrower than
+/// `validate_outbound_url` and is gated by caller-controlled dev configuration.
+pub fn validate_local_dev_url(url: &str) -> Result<()> {
+    let parsed = url
+        .parse::<reqwest::Url>()
+        .map_err(|e| anyhow::anyhow!("Invalid URL '{}': {}", url, e))?;
+
+    if parsed.scheme() != "http" {
+        bail!("local dev URL must use http: {}", url);
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL has no host: {}", url))?;
+
+    let ip = host
+        .parse::<IpAddr>()
+        .map_err(|_| anyhow::anyhow!("local dev URL must use an IP literal: {}", url))?;
+
+    if !ip.is_loopback() {
+        bail!("local dev URL must use a loopback address: {}", ip);
+    }
+
+    Ok(())
+}
+
 fn check_ip_allowed(ip: IpAddr) -> Result<()> {
     if ip.is_loopback() {
         bail!("SSRF blocked: loopback address {}", ip);

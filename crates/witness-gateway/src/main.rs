@@ -5,15 +5,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use witness_core::NetworkConfig;
 use witness_gateway::{
-    admin::AdminState,
-    anchor_manager::AnchorManager,
-    batch_manager::BatchManager,
-    federation_client::FederationClient,
-    freebird::FreebirdClient,
-    metrics, reconciler,
-    server::GatewayServer,
-    storage::Storage,
-    witness_client::WitnessClient,
+    admin::AdminState, anchor_manager::AnchorManager, batch_manager::BatchManager,
+    federation_client::FederationClient, freebird::FreebirdClient, metrics, reconciler,
+    server::GatewayServer, storage::Storage, witness_client::WitnessClient,
 };
 
 fn is_non_loopback_host(host: &str) -> bool {
@@ -213,11 +207,10 @@ async fn main() -> Result<()> {
             "/v1/check (non-consuming)"
         };
         tracing::info!(
-            "Freebird enabled: verifier={}, required={}, mode={}, trusted_issuers={}",
+            "Freebird enabled: verifier={}, required={}, mode={}",
             config.verifier_url.as_deref().unwrap_or("none"),
             config.required,
-            mode,
-            config.issuer_ids.len()
+            mode
         );
         if !config.consume_tokens {
             tracing::warn!(
@@ -290,10 +283,9 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         #[cfg(unix)]
         {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            )
-            .expect("failed to install SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
 
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {

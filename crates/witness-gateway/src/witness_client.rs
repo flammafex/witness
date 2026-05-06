@@ -70,3 +70,9 @@ impl WitnessClient {
             .unwrap_or(false)
     }
 }
+
+impl Default for WitnessClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

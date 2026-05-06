@@ -217,17 +217,8 @@ pub struct TimestampRequest {
 /// Freebird token for anonymous authorization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreebirdToken {
-    /// Base64-encoded token (131 or 195 bytes)
+    /// Base64url-encoded Freebird redemption token.
     pub token_b64: String,
-
-    /// Issuer ID that created this token
-    pub issuer_id: String,
-
-    /// Token expiration (Unix timestamp)
-    pub exp: u64,
-
-    /// Epoch used for MAC key derivation
-    pub epoch: u32,
 }
 
 /// Configuration for Freebird integration
@@ -235,9 +226,6 @@ pub struct FreebirdToken {
 pub struct FreebirdConfig {
     /// Freebird verifier URL (e.g., "http://localhost:8082")
     pub verifier_url: Option<String>,
-
-    /// Trusted issuer ID(s)
-    pub issuer_ids: Vec<String>,
 
     /// Whether Freebird is required (false = permissive mode for dev)
     #[serde(default)]
@@ -251,6 +239,12 @@ pub struct FreebirdConfig {
     /// use cases and requires strict rate limiting.
     #[serde(default = "default_freebird_consume_tokens")]
     pub consume_tokens: bool,
+
+    /// Permit local plaintext Freebird verifier URLs for development smoke tests.
+    ///
+    /// This must remain false for public deployments.
+    #[serde(default)]
+    pub allow_insecure_local: bool,
 }
 
 fn default_freebird_consume_tokens() -> bool {

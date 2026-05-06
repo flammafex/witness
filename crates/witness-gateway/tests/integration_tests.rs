@@ -167,12 +167,7 @@ async fn test_submit_attestation() {
 
     let status = response.status();
     let body_text = response.text().await.unwrap();
-    assert_eq!(
-        status,
-        201,
-        "Expected 201 Created, got {:?}",
-        body_text
-    );
+    assert_eq!(status, 201, "Expected 201 Created, got {:?}", body_text);
     let body: serde_json::Value = serde_json::from_str(&body_text).unwrap();
     assert_eq!(body["status"], "confirmed");
 }
@@ -219,7 +214,9 @@ async fn test_cors_headers() {
 
     assert_eq!(response.status(), 200);
     assert!(
-        response.headers().contains_key("access-control-allow-origin"),
+        response
+            .headers()
+            .contains_key("access-control-allow-origin"),
         "Expected CORS Access-Control-Allow-Origin header"
     );
 }

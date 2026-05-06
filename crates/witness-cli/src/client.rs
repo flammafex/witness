@@ -184,7 +184,10 @@ impl WitnessClient {
             anyhow::bail!("Gateway returned error {}: {}", status, error_text);
         }
 
-        response.json().await.context("Failed to parse STH response")
+        response
+            .json()
+            .await
+            .context("Failed to parse STH response")
     }
 
     /// Consistency proof linking two prior STHs in the gateway's log.

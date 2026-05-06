@@ -33,12 +33,7 @@ impl From<anyhow::Error> for AppError {
 impl From<FreebirdError> for AppError {
     fn from(e: FreebirdError) -> Self {
         match e {
-            FreebirdError::TokenInvalid | FreebirdError::TokenExpired => {
-                AppError::FreebirdTokenInvalid
-            }
-            FreebirdError::UntrustedIssuer(issuer) => {
-                AppError::FreebirdVerificationFailed(format!("Untrusted issuer: {}", issuer))
-            }
+            FreebirdError::TokenInvalid => AppError::FreebirdTokenInvalid,
             FreebirdError::VerificationFailed(msg) => AppError::FreebirdVerificationFailed(msg),
             FreebirdError::HttpError(e) => {
                 AppError::FreebirdVerificationFailed(format!("HTTP error: {}", e))

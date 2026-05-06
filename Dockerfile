@@ -78,6 +78,7 @@ RUN mkdir -p /data && chown -R witness:witness /data
 # Copy binaries from builder
 COPY --from=builder /app/target/release/witness-gateway /usr/local/bin/witness-gateway
 COPY --from=builder /app/target/release/witness /usr/local/bin/witness
+COPY --from=builder /app/target/release/witness-auditor /usr/local/bin/witness-auditor
 
 # Copy entrypoint script
 COPY docker-entrypoint-gateway.sh /usr/local/bin/

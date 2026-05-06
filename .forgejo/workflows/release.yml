@@ -1,4 +1,4 @@
-name: Release Binaries
+name: Release Archives
 
 on:
   push:
@@ -11,23 +11,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build images
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build multi-arch release root filesystems
         run: |
-          docker build --target witness-node    -t witness-node-build .
-          docker build --target witness-gateway -t witness-gateway-build .
+          set -euo pipefail
+          mkdir -p out
 
-      - name: Extract binaries
+          build_platform() {
+            arch="$1"
+            platform="$2"
+            docker buildx build --platform "$platform" --target witness-node --output "type=local,dest=out/witness-node-$arch" .
+            docker buildx build --platform "$platform" --target witness-gateway --output "type=local,dest=out/witness-gateway-$arch" .
+          }
+
+          build_platform linux-amd64 linux/amd64
+          build_platform linux-arm64 linux/arm64
+
+      - name: Assemble archives
         run: |
-          docker create --name node-tmp witness-node-build
-          docker cp node-tmp:/usr/local/bin/witness-node ./witness-node-linux-amd64
-          docker rm node-tmp
+          set -euo pipefail
+          VERSION="${{ github.ref_name }}"
+          mkdir -p dist
 
-          docker create --name gateway-tmp witness-gateway-build
-          docker cp gateway-tmp:/usr/local/bin/witness-gateway ./witness-gateway-linux-amd64
-          docker cp gateway-tmp:/usr/local/bin/witness         ./witness-cli-linux-amd64
-          docker rm gateway-tmp
+          package_arch() {
+            arch="$1"
+            root="dist/witness-${VERSION}-${arch}"
+            mkdir -p "$root/bin"
 
-          chmod +x witness-*-linux-amd64
+            cp "out/witness-node-${arch}/usr/local/bin/witness-node" "$root/bin/"
+            cp "out/witness-gateway-${arch}/usr/local/bin/witness-gateway" "$root/bin/"
+            cp "out/witness-gateway-${arch}/usr/local/bin/witness" "$root/bin/"
+            cp "out/witness-gateway-${arch}/usr/local/bin/witness-auditor" "$root/bin/"
+
+            cp README.md PRODUCTION.md TESTING.md SECURITY.md CONTRIBUTING.md CHANGELOG.md LICENSE "$root/"
+            cp -R docs examples configs "$root/"
+
+            tar -C dist -czf "dist/witness-${VERSION}-${arch}.tar.gz" "witness-${VERSION}-${arch}"
+          }
+
+          package_arch linux-amd64
+          package_arch linux-arm64
+
+          (cd dist && sha256sum witness-"${VERSION}"-*.tar.gz > SHA256SUMS)
 
       - name: Create Forgejo release
         id: release
@@ -39,12 +67,14 @@ jobs:
             -d "{\"tag_name\":\"${{ github.ref_name }}\",\"name\":\"${{ github.ref_name }}\",\"draft\":false,\"prerelease\":false}")
           echo "release_id=$(echo "$RESPONSE" | jq -r '.id')" >> "$GITHUB_OUTPUT"
 
-      - name: Upload binaries
+      - name: Upload archives and checksums
         run: |
+          set -euo pipefail
           RELEASE_ID="${{ steps.release.outputs.release_id }}"
-          for binary in witness-node-linux-amd64 witness-gateway-linux-amd64 witness-cli-linux-amd64; do
+          for asset in dist/witness-${{ github.ref_name }}-linux-amd64.tar.gz dist/witness-${{ github.ref_name }}-linux-arm64.tar.gz dist/SHA256SUMS; do
+            name=$(basename "$asset")
             curl -s -X POST \
-              "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases/${RELEASE_ID}/assets?name=${binary}" \
+              "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases/${RELEASE_ID}/assets?name=${name}" \
               -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-              -F "attachment=@${binary}"
+              -F "attachment=@${asset}"
           done

@@ -4,12 +4,12 @@ use rand::rngs::OsRng;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use witness_core::log::LogConsistencyProof;
 use witness_core::{
     merkle::{consistency_path, merkle_tree_hash},
     AttestationSignatures, NetworkConfig, SignatureScheme, SignedAttestation, SignedTreeHead,
     TreeHead, WitnessInfo, WitnessSignature,
 };
-use witness_core::log::LogConsistencyProof;
 
 use witness_auditor::audit::{Auditor, TickResult};
 use witness_auditor::storage::Storage;
@@ -78,7 +78,9 @@ async fn start_server(state: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router.into_make_service()).await.unwrap();
+        axum::serve(listener, router.into_make_service())
+            .await
+            .unwrap();
     });
     format!("http://{}", addr)
 }

@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn test_epoch_secs_does_not_panic() {
-        let result = std::panic::catch_unwind(|| epoch_secs());
+        let result = std::panic::catch_unwind(epoch_secs);
         assert!(result.is_ok(), "epoch_secs() should not panic");
     }
 }

@@ -14,8 +14,8 @@ pub async fn sth(gateway: &str, output: &str, verify: bool) -> Result<()> {
 
     if verify {
         let config: NetworkConfig = client.get_network_config().await?;
-        let count = verify_signed_tree_head(&sth, &config)
-            .context("STH signature verification failed")?;
+        let count =
+            verify_signed_tree_head(&sth, &config).context("STH signature verification failed")?;
         eprintln!(
             "STH verified: {} of {} signatures valid (threshold: {})",
             count,
@@ -49,8 +49,7 @@ pub async fn consistency(
 
     if verify {
         let config = client.get_network_config().await?;
-        verify_log_consistency(&proof, &config)
-            .context("Consistency proof verification failed")?;
+        verify_log_consistency(&proof, &config).context("Consistency proof verification failed")?;
         eprintln!(
             "Consistency proof verified: tree[{}] is a prefix of tree[{}]",
             first, second
@@ -62,8 +61,14 @@ pub async fn consistency(
         _ => {
             println!("Old tree size: {}", proof.old_sth.tree_head.tree_size);
             println!("New tree size: {}", proof.new_sth.tree_head.tree_size);
-            println!("Old root:      {}", hex::encode(proof.old_sth.tree_head.root_hash));
-            println!("New root:      {}", hex::encode(proof.new_sth.tree_head.root_hash));
+            println!(
+                "Old root:      {}",
+                hex::encode(proof.old_sth.tree_head.root_hash)
+            );
+            println!(
+                "New root:      {}",
+                hex::encode(proof.new_sth.tree_head.root_hash)
+            );
             println!("Proof hashes:  {}", proof.hashes.len());
             for (i, h) in proof.hashes.iter().enumerate() {
                 println!("  [{}] {}", i, hex::encode(h));

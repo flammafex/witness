@@ -11,7 +11,10 @@ pub enum SafeResolverError {
     #[error("SSRF blocked: private IP {ip} resolved for {host}")]
     PrivateIpBlocked { ip: IpAddr, host: String },
     #[error("DNS resolution failed for {host}: {source}")]
-    ResolutionFailed { host: String, source: std::io::Error },
+    ResolutionFailed {
+        host: String,
+        source: std::io::Error,
+    },
     #[error("No addresses found for {host}")]
     NoAddresses { host: String },
 }

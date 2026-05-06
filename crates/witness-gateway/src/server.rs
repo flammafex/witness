@@ -14,8 +14,8 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
-use futures_util::{SinkExt, StreamExt};
 use dashmap::DashMap;
+use futures_util::{SinkExt, StreamExt};
 use governor::{clock::DefaultClock, state::keyed::DashMapStateStore, Quota, RateLimiter};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::net::{IpAddr, SocketAddr};
@@ -223,6 +223,12 @@ impl FederationAuthStore {
                 before_expired - after_expired
             );
         }
+    }
+}
+
+impl Default for FederationAuthStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1327,18 +1333,16 @@ async fn handle_ws_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        extract::DefaultBodyLimit,
-        routing::post,
-        Router,
-    };
+    use axum::{body::Body, extract::DefaultBodyLimit, routing::post, Router};
     use tower::Service;
 
     #[tokio::test]
     async fn body_limit_rejects_oversized_payload() {
         let app = Router::new()
-            .route("/test", post(|_body: Json<serde_json::Value>| async { "ok" }))
+            .route(
+                "/test",
+                post(|_body: Json<serde_json::Value>| async { "ok" }),
+            )
             .layer(DefaultBodyLimit::max(65_536));
 
         let large_payload = serde_json::json!({
@@ -1365,7 +1369,10 @@ mod tests {
     #[tokio::test]
     async fn body_limit_accepts_sized_payload() {
         let app = Router::new()
-            .route("/test", post(|_body: Json<serde_json::Value>| async { "ok" }))
+            .route(
+                "/test",
+                post(|_body: Json<serde_json::Value>| async { "ok" }),
+            )
             .layer(DefaultBodyLimit::max(65_536));
 
         let small_payload = serde_json::json!({
@@ -1411,7 +1418,9 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(
-            response.headers().contains_key("access-control-allow-origin"),
+            response
+                .headers()
+                .contains_key("access-control-allow-origin"),
             "Preflight response must include Access-Control-Allow-Origin header"
         );
     }
@@ -1437,7 +1446,9 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(
-            response.headers().contains_key("access-control-allow-origin"),
+            response
+                .headers()
+                .contains_key("access-control-allow-origin"),
             "GET response with Origin header must include Access-Control-Allow-Origin"
         );
     }
@@ -1448,14 +1459,20 @@ mod tests {
         let partner = "peer-network-1";
 
         let token_a = store.generate_auth_token(partner);
-        assert!(store.validate_auth_token(&token_a), "initial token should be valid");
+        assert!(
+            store.validate_auth_token(&token_a),
+            "initial token should be valid"
+        );
 
         let token_b = store.generate_auth_token(partner);
         assert!(
             !store.validate_auth_token(&token_a),
             "old token should be invalidated after rotation"
         );
-        assert!(store.validate_auth_token(&token_b), "new token should be valid");
+        assert!(
+            store.validate_auth_token(&token_b),
+            "new token should be valid"
+        );
     }
 
     #[test]
@@ -1466,7 +1483,10 @@ mod tests {
         let token_a = store.generate_auth_token(partner);
         let _token_b = store.generate_auth_token(partner);
 
-        assert!(store.expired.contains_key(partner), "old token should be in expired map");
+        assert!(
+            store.expired.contains_key(partner),
+            "old token should be in expired map"
+        );
 
         store.cleanup_expired(epoch_secs());
 

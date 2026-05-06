@@ -1,4 +1,4 @@
-name: Build & Push Docker Images
+name: Build, Push, And Sign Docker Images
 
 on:
   push:
@@ -6,8 +6,14 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 env:
   IMAGE_PREFIX: git.carpocratian.org/sibyl
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   build:
@@ -20,8 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: sigstore/cosign-installer@v3.6.0
+
       - name: Log in to Forgejo registry
-        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.carpocratian.org -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.REGISTRY_TOKEN }}" | docker login git.carpocratian.org -u "${{ github.actor }}" --password-stdin
 
       - name: Compute tags
         id: tags
@@ -39,16 +51,41 @@ jobs:
             MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
             TAGS="${TAGS},${IMAGE}:${MAJOR_MINOR}"
           fi
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "first_tag=${TAGS%%,*}" >> "$GITHUB_OUTPUT"
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push multi-arch image
         run: |
           IFS=',' read -ra TAG_LIST <<< "${{ steps.tags.outputs.tags }}"
-          TAG_ARGS=""
+          TAG_ARGS=()
           for t in "${TAG_LIST[@]}"; do
-            TAG_ARGS="$TAG_ARGS -t $t"
+            TAG_ARGS+=("-t" "$t")
           done
-          docker build $TAG_ARGS --target ${{ matrix.target }} .
-          for t in "${TAG_LIST[@]}"; do
-            docker push "$t"
-          done
+
+          docker buildx build \
+            --platform "${{ env.PLATFORMS }}" \
+            --target "${{ matrix.target }}" \
+            --attest type=provenance,mode=max \
+            --attest type=sbom \
+            --push \
+            "${TAG_ARGS[@]}" \
+            .
+
+      - name: Sign image digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          if echo "${{ github.ref }}" | grep -q '^refs/tags/v' && [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
+            echo "COSIGN_PRIVATE_KEY is required for tagged image releases" >&2
+            exit 1
+          fi
+
+          if [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
+            echo "COSIGN_PRIVATE_KEY not configured; skipping image signing for non-tag build"
+            exit 0
+          fi
+
+          DIGEST=$(docker buildx imagetools inspect "${{ steps.tags.outputs.first_tag }}" | awk '/Digest:/ {print $2; exit}')
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "${{ steps.tags.outputs.image }}@${DIGEST}"

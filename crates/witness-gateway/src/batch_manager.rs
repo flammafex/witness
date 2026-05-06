@@ -126,10 +126,14 @@ impl BatchManager {
 
         // Confirm all attestations in the batch (defensive: they should already be confirmed)
         for attestation in &attestations {
-            if let Err(e) = self.storage.confirm_attestation(&attestation.attestation.hash).await {
+            if let Err(e) = self
+                .storage
+                .confirm_attestation(&attestation.attestation.hash)
+                .await
+            {
                 tracing::warn!(
                     "Failed to confirm attestation {} in batch: {}",
-                    hex::encode(&attestation.attestation.hash),
+                    hex::encode(attestation.attestation.hash),
                     e
                 );
             }

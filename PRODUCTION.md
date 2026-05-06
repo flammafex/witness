@@ -106,9 +106,9 @@ Configuration comes from two sources: a `network.json` file and environment vari
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `FREEBIRD_VERIFIER_URL` | No | URL of the Freebird verifier service. If unset, Freebird is disabled. |
-| `FREEBIRD_ISSUER_IDS` | No | Comma-separated list of trusted Freebird issuers. Example: `issuer:prod:v1,issuer:prod:v2`. |
 | `FREEBIRD_REQUIRED` | No | Set to `true` or `1` to reject timestamp requests that lack a valid Freebird token. Default: `false`. |
 | `FREEBIRD_CONSUME_TOKENS` | No | Set to `false` to use non-consuming `/v1/check` mode. Default: `true` (consuming `/v1/verify`). Only use `false` for explicit proof-of-possession flows with strict rate limiting. |
+| `FREEBIRD_ALLOW_INSECURE_LOCAL` | No | Local development only. Set to `true` only for plaintext loopback verifier smoke tests. Never enable for public deployments. |
 
 ### network.json
 
@@ -242,7 +242,6 @@ Environment="WITNESS_METRICS_TOKEN=<replace-with-random-secret>"
 
 # Freebird (optional but recommended for public gateways)
 # Environment="FREEBIRD_VERIFIER_URL=https://freebird.example.com"
-# Environment="FREEBIRD_ISSUER_IDS=issuer:prod:v1"
 # Environment="FREEBIRD_REQUIRED=true"
 # Environment="FREEBIRD_CONSUME_TOKENS=true"
 
@@ -505,4 +504,4 @@ Check witness health metrics. A slow or unreachable witness will block the thres
 
 **Freebird verification fails**
 
-Verify `FREEBIRD_VERIFIER_URL` is reachable from the gateway host. The gateway's HTTP client rejects private IP ranges to prevent SSRF, so the verifier must be on a public routable address or you must adjust the network topology accordingly.
+Verify `FREEBIRD_VERIFIER_URL` is reachable from the gateway host. Witness sends the current Freebird verifier request shape, `{ "token_b64": "..." }`, to `/v1/verify` in consuming mode and `/v1/check` in non-consuming mode. The gateway's HTTP client rejects private IP ranges to prevent SSRF, so the verifier must be on a public routable address or you must adjust the network topology accordingly.

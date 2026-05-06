@@ -16,9 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::merkle::{verify_consistency, verify_inclusion};
-use crate::{
-    Attestation, NetworkConfig, Result, SignedAttestation, WitnessError,
-};
+use crate::{Attestation, NetworkConfig, Result, SignedAttestation, WitnessError};
 
 /// Domain separator for the STH-signing digest.  Bumping the suffix is a
 /// hard fork of the log signature scheme.
