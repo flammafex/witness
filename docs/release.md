@@ -3,33 +3,39 @@
 Witness releases are tag-driven. Use annotated version tags:
 
 ```bash
-git tag -a v0.5.0 -m "Witness 0.5.0"
-git push origin v0.5.0
+git tag -a v0.6.0 -m "Witness 0.6.0"
+git push origin v0.6.0
 ```
 
-Pushing a `v*` tag should build release binaries and container images. Public
-production deployments should pin version tags or image digests instead of
-`latest`.
+Pushing a `v*` tag triggers the release workflow
+(`.forgejo/workflows/release.yml`) which builds Linux binaries for x86_64 and
+aarch64 (gnu and musl) and publishes them to the Forgejo releases page with
+SHA-256 checksums. Public production deployments should pin version tags or
+image digests instead of `latest`.
 
 ## Release Artifacts
 
-A complete release should include:
+Each release includes four tarballs:
 
-- `witness-node`
-- `witness-gateway`
-- `witness`
-- `witness-auditor`
-- README, license, security policy, changelog, production guide, and docs
-- Docker image references
-- SHA-256 checksums
-- image signatures or provenance attestations
+- `witness-v0.6.0-x86_64-unknown-linux-gnu.tar.gz`
+- `witness-v0.6.0-aarch64-unknown-linux-gnu.tar.gz`
+- `witness-v0.6.0-x86_64-unknown-linux-musl.tar.gz`
+- `witness-v0.6.0-aarch64-unknown-linux-musl.tar.gz`
 
-The release workflow publishes Linux `amd64` and `arm64` tarballs. Each tarball
-contains `bin/`, documentation, examples, and server configuration templates.
+Each tarball contains:
+
+- `bin/witness-node`
+- `bin/witness-gateway`
+- `bin/witness`
+- `bin/witness-auditor`
+- `configs/`, `docs/`, `examples/`
+- `README.md`, `PRODUCTION.md`, `TESTING.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `LICENSE`
+
+A `SHA256SUMS` file is published alongside the tarballs.
 
 ## Container Images
 
-The repository currently builds:
+Container images are built separately by `.forgejo/workflows/docker.yml`:
 
 ```text
 git.carpocratian.org/sibyl/witness-node:<version>
@@ -38,8 +44,8 @@ git.carpocratian.org/sibyl/witness-gateway:<version>
 
 Recommended tags:
 
-- full version, such as `0.5.0`
-- minor version, such as `0.5`
+- full version, such as `0.6.0`
+- minor version, such as `0.6`
 - commit SHA for every build
 
 Production deployments should pin a version tag or digest.
@@ -47,6 +53,12 @@ Production deployments should pin a version tag or digest.
 The Docker workflow builds `linux/amd64` and `linux/arm64` images with BuildKit
 provenance and SBOM attestations. Tagged releases require `COSIGN_PRIVATE_KEY`
 and sign the pushed manifest digest with cosign.
+
+## GitHub Mirror
+
+The Forgejo repository mirrors to GitHub, but only git data syncs — branches,
+tags, and commits. Release objects and binary assets are not mirrored. Download
+binaries from the Forgejo releases page.
 
 ## Pre-Tag Checklist
 
@@ -76,5 +88,6 @@ record the digest in deployment manifests.
 
 ## Current Gaps
 
-- keyless signing is not configured; image signing currently expects a cosign
-  private key secret
+- Keyless signing is not configured; image signing currently expects a cosign
+  private key secret.
+- Binary releases are not signed (checksums only).

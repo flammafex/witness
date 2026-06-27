@@ -170,6 +170,15 @@ async fn test_submit_attestation() {
     assert_eq!(status, 201, "Expected 201 Created, got {:?}", body_text);
     let body: serde_json::Value = serde_json::from_str(&body_text).unwrap();
     assert_eq!(body["status"], "confirmed");
+    assert_eq!(body["attestation"]["attestation"]["hash"], hash);
+    assert!(
+        body["attestation"]["signatures"]["signatures"][0]["signature"]
+            .as_str()
+            .is_some_and(|signature| signature
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+        "signature should be canonical lowercase hex"
+    );
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ pub mod external_anchors;
 pub mod federation;
 pub mod log;
 pub mod merkle;
+pub mod serde_hex;
 pub mod signature_scheme;
 pub mod types;
 

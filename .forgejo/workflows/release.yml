@@ -5,76 +5,103 @@ on:
     tags: ['v*']
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Install cargo-zigbuild
+        run: pip3 install ziglang cargo-zigbuild
 
-      - name: Build multi-arch release root filesystems
-        run: |
-          set -euo pipefail
-          mkdir -p out
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
-          build_platform() {
-            arch="$1"
-            platform="$2"
-            docker buildx build --platform "$platform" --target witness-node --output "type=local,dest=out/witness-node-$arch" .
-            docker buildx build --platform "$platform" --target witness-gateway --output "type=local,dest=out/witness-gateway-$arch" .
-          }
+      - name: Build
+        run: cargo zigbuild --release --workspace --target ${{ matrix.target }}
 
-          build_platform linux-amd64 linux/amd64
-          build_platform linux-arm64 linux/arm64
-
-      - name: Assemble archives
+      - name: Assemble archive
         run: |
           set -euo pipefail
           VERSION="${{ github.ref_name }}"
-          mkdir -p dist
+          TARGET="${{ matrix.target }}"
+          ROOT="witness-${VERSION}-${TARGET}"
+          mkdir -p "$ROOT/bin"
 
-          package_arch() {
-            arch="$1"
-            root="dist/witness-${VERSION}-${arch}"
-            mkdir -p "$root/bin"
-
-            cp "out/witness-node-${arch}/usr/local/bin/witness-node" "$root/bin/"
-            cp "out/witness-gateway-${arch}/usr/local/bin/witness-gateway" "$root/bin/"
-            cp "out/witness-gateway-${arch}/usr/local/bin/witness" "$root/bin/"
-            cp "out/witness-gateway-${arch}/usr/local/bin/witness-auditor" "$root/bin/"
-
-            cp README.md PRODUCTION.md TESTING.md SECURITY.md CONTRIBUTING.md CHANGELOG.md LICENSE "$root/"
-            cp -R docs examples configs "$root/"
-
-            tar -C dist -czf "dist/witness-${VERSION}-${arch}.tar.gz" "witness-${VERSION}-${arch}"
-          }
-
-          package_arch linux-amd64
-          package_arch linux-arm64
-
-          (cd dist && sha256sum witness-"${VERSION}"-*.tar.gz > SHA256SUMS)
-
-      - name: Create Forgejo release
-        id: release
-        run: |
-          RESPONSE=$(curl -s -X POST \
-            "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases" \
-            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"${{ github.ref_name }}\",\"name\":\"${{ github.ref_name }}\",\"draft\":false,\"prerelease\":false}")
-          echo "release_id=$(echo "$RESPONSE" | jq -r '.id')" >> "$GITHUB_OUTPUT"
-
-      - name: Upload archives and checksums
-        run: |
-          set -euo pipefail
-          RELEASE_ID="${{ steps.release.outputs.release_id }}"
-          for asset in dist/witness-${{ github.ref_name }}-linux-amd64.tar.gz dist/witness-${{ github.ref_name }}-linux-arm64.tar.gz dist/SHA256SUMS; do
-            name=$(basename "$asset")
-            curl -s -X POST \
-              "https://git.carpocratian.org/api/v1/repos/sibyl/witness/releases/${RELEASE_ID}/assets?name=${name}" \
-              -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
-              -F "attachment=@${asset}"
+          for bin in witness-node witness-gateway witness witness-auditor; do
+            cp "target/${TARGET}/release/$bin" "$ROOT/bin/"
           done
+
+          cp README.md PRODUCTION.md TESTING.md SECURITY.md CONTRIBUTING.md CHANGELOG.md LICENSE "$ROOT/"
+          cp -R docs examples configs "$ROOT/"
+
+          tar -czf "${ROOT}.tar.gz" "$ROOT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: witness-*.tar.gz
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Upload to Forgejo release
+        uses: actions/forgejo-release@v2
+        with:
+          direction: upload
+          url: ${{ github.server_url }}
+          repo: ${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          release-dir: dist
+          release-notes: |
+            ## Witness ${{ github.ref_name }}
+
+            Pre-1.0, unaudited, not Byzantine-fault-tolerant.
+
+            ### Contents
+
+            Each archive contains:
+            - `bin/witness-node` — signing service
+            - `bin/witness-gateway` — public API, aggregation, batching
+            - `bin/witness` — CLI client
+            - `bin/witness-auditor` — independent auditor
+            - `configs/` — server configuration templates
+            - `examples/` — setup and demo scripts
+            - `docs/` — documentation
+            - `README.md`, `PRODUCTION.md`, `SECURITY.md`, `CHANGELOG.md`, `LICENSE`
+
+            ### Verification
+
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
+
+            See CHANGELOG for changes.
+          override: true

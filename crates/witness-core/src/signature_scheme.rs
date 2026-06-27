@@ -34,6 +34,7 @@ pub enum AttestationSignatures {
     /// BLS aggregated signature (single signature from multiple witnesses)
     Aggregated {
         /// Aggregated BLS signature
+        #[serde(with = "crate::serde_hex::vec")]
         signature: Vec<u8>,
 
         /// List of witness IDs that participated

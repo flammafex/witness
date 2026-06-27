@@ -33,6 +33,7 @@ pub struct TreeHead {
     /// When this STH was issued (Unix seconds).
     pub timestamp: u64,
     /// Merkle root of the log at `tree_size`.
+    #[serde(with = "crate::serde_hex::array32")]
     pub root_hash: [u8; 32],
 }
 

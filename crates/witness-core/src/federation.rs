@@ -14,6 +14,7 @@ pub struct AttestationBatch {
     pub network_id: String,
 
     /// Merkle root of all attestations in this batch
+    #[serde(with = "crate::serde_hex::array32")]
     pub merkle_root: [u8; 32],
 
     /// Start of batch period (Unix seconds)
@@ -164,6 +165,7 @@ pub struct FederatedAttestation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FederatedVerifyRequest {
     /// Hash to verify
+    #[serde(with = "crate::serde_hex::array32")]
     pub hash: [u8; 32],
 }
 

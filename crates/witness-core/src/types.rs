@@ -5,6 +5,7 @@ use std::fmt;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Attestation {
     /// SHA-256 hash of the content being timestamped
+    #[serde(with = "crate::serde_hex::array32")]
     pub hash: [u8; 32],
 
     /// Unix timestamp in seconds
@@ -70,6 +71,7 @@ pub struct WitnessSignature {
     pub witness_id: String,
 
     /// Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
+    #[serde(with = "crate::serde_hex::vec")]
     pub signature: Vec<u8>,
 }
 
@@ -288,6 +290,7 @@ pub struct SignRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignResponse {
     pub witness_id: String,
+    #[serde(with = "crate::serde_hex::vec")]
     pub signature: Vec<u8>,
 }
 
@@ -306,6 +309,9 @@ mod tests {
 
         // Serialize to JSON
         let json = serde_json::to_string(&attestation).unwrap();
+        assert!(json.contains(
+            r#""hash":"0000000000000000000000000000000000000000000000000000000000000000""#
+        ));
 
         // Deserialize back
         let deserialized: Attestation = serde_json::from_str(&json).unwrap();
@@ -347,6 +353,7 @@ mod tests {
 
         // Serialize and deserialize
         let json = serde_json::to_string(&signed).unwrap();
+        assert!(json.contains(r#""signature":"01020304""#));
         let deserialized: SignedAttestation = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.signature_count(), 2);
@@ -373,6 +380,7 @@ mod tests {
 
         // Serialize and deserialize
         let json = serde_json::to_string(&signed).unwrap();
+        assert!(json.contains(r#""signature":"0a141e28""#));
         let deserialized: SignedAttestation = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.signature_count(), 2);
