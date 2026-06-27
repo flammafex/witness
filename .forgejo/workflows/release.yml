@@ -5,71 +5,33 @@ on:
     tags: ['v*']
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cargo-zigbuild
-        run: pip3 install ziglang cargo-zigbuild
-
-      - uses: https://github.com/Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
       - name: Build
-        run: cargo zigbuild --release --workspace --target ${{ matrix.target }}
+        run: cargo build --release --workspace
 
       - name: Assemble archive
         run: |
           set -euo pipefail
           VERSION="${{ github.ref_name }}"
-          TARGET="${{ matrix.target }}"
-          ROOT="witness-${VERSION}-${TARGET}"
-          mkdir -p "$ROOT/bin"
+          ROOT="witness-${VERSION}-x86_64-linux-gnu"
+          mkdir -p "$ROOT/bin" dist
 
           for bin in witness-node witness-gateway witness witness-auditor; do
-            cp "target/${TARGET}/release/$bin" "$ROOT/bin/"
+            cp "target/release/$bin" "$ROOT/bin/"
           done
 
           cp README.md PRODUCTION.md TESTING.md SECURITY.md CONTRIBUTING.md CHANGELOG.md LICENSE "$ROOT/"
           cp -R docs examples configs "$ROOT/"
 
-          tar -czf "${ROOT}.tar.gz" "$ROOT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: archive-${{ matrix.target }}
-          path: witness-*.tar.gz
-
-  release:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd dist
-          sha256sum *.tar.gz > SHA256SUMS
+          tar -czf "dist/${ROOT}.tar.gz" "$ROOT"
+          (cd dist && sha256sum "${ROOT}.tar.gz" > SHA256SUMS)
 
       - name: Upload to Forgejo release
         uses: actions/forgejo-release@v2

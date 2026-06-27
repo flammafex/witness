@@ -3,7 +3,6 @@ name: Build, Push, And Sign Docker Images
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -13,7 +12,7 @@ permissions:
 
 env:
   IMAGE_PREFIX: git.carpocratian.org/sibyl
-  PLATFORMS: linux/amd64,linux/arm64
+  PLATFORMS: linux/amd64
 
 jobs:
   build:
@@ -25,8 +24,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -40,22 +37,12 @@ jobs:
         run: |
           IMAGE="${{ env.IMAGE_PREFIX }}/${{ matrix.target }}"
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          REF="${{ github.ref }}"
-          TAGS="${IMAGE}:${SHA}"
-          if [ "$REF" = "refs/heads/main" ]; then
-            TAGS="${TAGS},${IMAGE}:latest"
-          fi
-          if echo "$REF" | grep -q '^refs/tags/v'; then
-            VERSION="${REF#refs/tags/v}"
-            TAGS="${TAGS},${IMAGE}:${VERSION}"
-            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
-            TAGS="${TAGS},${IMAGE}:${MAJOR_MINOR}"
-          fi
+          TAGS="${IMAGE}:${SHA},${IMAGE}:latest"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "first_tag=${TAGS%%,*}" >> "$GITHUB_OUTPUT"
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push multi-arch image
+      - name: Build and push image
         run: |
           IFS=',' read -ra TAG_LIST <<< "${{ steps.tags.outputs.tags }}"
           TAG_ARGS=()
@@ -77,13 +64,8 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          if echo "${{ github.ref }}" | grep -q '^refs/tags/v' && [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
-            echo "COSIGN_PRIVATE_KEY is required for tagged image releases" >&2
-            exit 1
-          fi
-
           if [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
-            echo "COSIGN_PRIVATE_KEY not configured; skipping image signing for non-tag build"
+            echo "COSIGN_PRIVATE_KEY not configured; skipping image signing"
             exit 0
           fi
 

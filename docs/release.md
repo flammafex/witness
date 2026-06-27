@@ -8,19 +8,16 @@ git push origin v0.6.0
 ```
 
 Pushing a `v*` tag triggers the release workflow
-(`.forgejo/workflows/release.yml`) which builds Linux binaries for x86_64 and
-aarch64 (gnu and musl) and publishes them to the Forgejo releases page with
-SHA-256 checksums. Public production deployments should pin version tags or
-image digests instead of `latest`.
+(`.forgejo/workflows/release.yml`) which builds a native x86_64 Linux binary
+archive and publishes it to the Forgejo releases page with SHA-256 checksums.
+Public production deployments should pin version tags or image digests instead
+of `latest`.
 
 ## Release Artifacts
 
-Each release includes four tarballs:
+Each release includes one tarball:
 
-- `witness-v0.6.0-x86_64-unknown-linux-gnu.tar.gz`
-- `witness-v0.6.0-aarch64-unknown-linux-gnu.tar.gz`
-- `witness-v0.6.0-x86_64-unknown-linux-musl.tar.gz`
-- `witness-v0.6.0-aarch64-unknown-linux-musl.tar.gz`
+- `witness-v0.6.0-x86_64-linux-gnu.tar.gz`
 
 Each tarball contains:
 
@@ -35,7 +32,8 @@ A `SHA256SUMS` file is published alongside the tarballs.
 
 ## Container Images
 
-Container images are built separately by `.forgejo/workflows/docker.yml`:
+Container images are built separately by `.forgejo/workflows/docker.yml` on
+pushes to `main` (not on tags). The workflow builds native `linux/amd64` images:
 
 ```text
 git.carpocratian.org/sibyl/witness-node:<version>
@@ -50,9 +48,9 @@ Recommended tags:
 
 Production deployments should pin a version tag or digest.
 
-The Docker workflow builds `linux/amd64` and `linux/arm64` images with BuildKit
-provenance and SBOM attestations. Tagged releases require `COSIGN_PRIVATE_KEY`
-and sign the pushed manifest digest with cosign.
+The Docker workflow builds `linux/amd64` images with BuildKit provenance and
+SBOM attestations. Image signing requires `COSIGN_PRIVATE_KEY` and signs the
+pushed manifest digest with cosign.
 
 ## GitHub Mirror
 

@@ -32,8 +32,8 @@ stable API policy is published.
 ### Added
 
 - Forgejo Actions release workflow (`.forgejo/workflows/release.yml`) that
-  builds Linux binaries for x86_64 and aarch64 (gnu and musl) and publishes
-  them to the Forgejo releases page with SHA-256 checksums.
+  builds a native x86_64 Linux binary archive and publishes it to the Forgejo
+  releases page with SHA-256 checksums.
 - Added security policy, threat model, release packaging notes, contribution
   guide, and Freebird integration guidance.
 
