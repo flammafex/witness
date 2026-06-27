@@ -33,6 +33,14 @@ jobs:
           tar -czf "dist/${ROOT}.tar.gz" "$ROOT"
           (cd dist && sha256sum "${ROOT}.tar.gz" > SHA256SUMS)
 
+      - name: Write release notes
+        run: |
+          cat > dist/RELEASE_NOTES.md << 'EOF'
+          Pre-1.0, unaudited, not Byzantine-fault-tolerant.
+
+          See SHA256SUMS for checksums. See CHANGELOG for changes.
+          EOF
+
       - name: Upload to Forgejo release
         uses: actions/forgejo-release@v2
         with:
@@ -42,28 +50,5 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
           release-dir: dist
-          release-notes: |
-            ## Witness ${{ github.ref_name }}
-
-            Pre-1.0, unaudited, not Byzantine-fault-tolerant.
-
-            ### Contents
-
-            Each archive contains:
-            - `bin/witness-node` — signing service
-            - `bin/witness-gateway` — public API, aggregation, batching
-            - `bin/witness` — CLI client
-            - `bin/witness-auditor` — independent auditor
-            - `configs/` — server configuration templates
-            - `examples/` — setup and demo scripts
-            - `docs/` — documentation
-            - `README.md`, `PRODUCTION.md`, `SECURITY.md`, `CHANGELOG.md`, `LICENSE`
-
-            ### Verification
-
-            ```bash
-            sha256sum -c SHA256SUMS
-            ```
-
-            See CHANGELOG for changes.
+          release-notes-file: RELEASE_NOTES.md
           override: true

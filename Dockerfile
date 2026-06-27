@@ -6,16 +6,18 @@ FROM rust:1.91 as builder
 WORKDIR /app
 
 # Install build dependencies
-# libssl-dev is required for crypto compilation
 # clang/llvm might be required for 'blst' (BLS signatures) depending on the crate version
 RUN apt-get update && apt-get install -y \
     pkg-config \
-    libssl-dev \
     clang \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the entire workspace
 COPY . .
+
+# Disable LTO for Docker builds to reduce memory usage and build time
+ENV CARGO_PROFILE_RELEASE_LTO=off
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 
 # Build all binaries in release mode
 RUN cargo build --release
@@ -30,7 +32,6 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,7 +65,6 @@ WORKDIR /app
 # Install runtime dependencies (sqlite3 lib might be needed if dynamically linked)
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl3 \
     curl \
     sqlite3 \
     gosu \
