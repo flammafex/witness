@@ -65,11 +65,11 @@ curl http://localhost:3001/health  # Witness 1
 curl http://localhost:8080/health  # Gateway
 ```
 
-### 5. Timestamp a File
+### 5. Create and Poll an Attestation Job
 
 ```bash
 echo "Hello, Witness!" > /tmp/test.txt
-cargo run -p witness-cli -- timestamp --file /tmp/test.txt --save /tmp/attestation.json
+cargo run -p witness-cli -- attest --file /tmp/test.txt --save /tmp/attestation-job.json
 ```
 
 ### 6. Verify
@@ -77,9 +77,11 @@ cargo run -p witness-cli -- timestamp --file /tmp/test.txt --save /tmp/attestati
 ```bash
 # Look up by hash
 HASH=$(sha256sum /tmp/test.txt | awk '{print $1}')
-cargo run -p witness-cli -- get $HASH
+cargo run -p witness-cli -- status $HASH
 
-# Verify attestation file
+# Once confirmed, save the latest snapshot and extract the signed result
+curl http://localhost:8080/v1/attestations/$HASH > /tmp/attestation-job.json
+jq '.signed_attestation' /tmp/attestation-job.json > /tmp/attestation.json
 cargo run -p witness-cli -- verify /tmp/attestation.json
 ```
 
@@ -89,10 +91,13 @@ cargo run -p witness-cli -- verify /tmp/attestation.json
 # Get network config
 curl http://localhost:8080/v1/config | jq
 
-# Timestamp a hash
-curl -X POST http://localhost:8080/v1/timestamp \
+# Reserve an attestation job
+curl -X POST http://localhost:8080/v1/attestations \
   -H "Content-Type: application/json" \
   -d '{"hash":"a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"}' | jq
+
+# Poll until status is confirmed
+curl http://localhost:8080/v1/attestations/$HASH | jq
 
 # Get merkle proof (after batch closes)
 curl http://localhost:8080/v1/proof/$HASH | jq
@@ -114,18 +119,30 @@ cargo test --workspace
 ### Threshold Behavior
 
 1. Start only 1 witness (below threshold of 2)
-2. Try to timestamp → should fail with "Insufficient signatures"
+2. Submit a job; it should remain `retryable` and expose `next_attempt_at`
 
 ### Witness Failure
 
-1. Start all 3 witnesses, timestamp succeeds
-2. Stop 1 witness, timestamp still succeeds (2 remaining)
-3. Stop another witness, timestamp fails (only 1 left)
+1. Start all 3 witnesses; a submitted job reaches `confirmed`
+2. Stop 1 witness; jobs still confirm with 2 remaining
+3. Stop another witness; jobs remain `retryable` until quorum returns
 
 ### Duplicate Handling
 
-1. Timestamp same hash twice
-2. Second request should return existing attestation
+1. Submit the same hash twice while pending
+2. Both responses must contain the exact same timestamp/network/sequence tuple
+3. After confirmation, another submission returns the same signed result
+
+### Restart Recovery
+
+1. Submit a job while witnesses are unavailable and observe `retryable`
+2. Restart the gateway using the same SQLite database
+3. Restore quorum and verify the same tuple reaches `confirmed`
+
+### Breaking API Regression
+
+`POST /v1/timestamp` and `GET /v1/timestamp/:hash` must return `404`. Pending
+jobs must not return successful `/v1/proof/:hash` or `/v1/bundle/:hash` results.
 
 ## Test Checklist
 
@@ -133,12 +150,12 @@ cargo test --workspace
 - [ ] Unit tests pass
 - [ ] Witness nodes start
 - [ ] Gateway starts
-- [ ] Timestamping works
-- [ ] Retrieval by hash works
+- [ ] Attestation submission returns a durable pending/confirmed job
+- [ ] Status polling by hash works
 - [ ] Verification passes for valid attestations
 - [ ] Invalid attestations are rejected
 - [ ] Threshold enforcement works
-- [ ] Duplicates return existing attestation
+- [ ] Duplicates return the existing immutable tuple/result
 - [ ] Admin dashboard loads (`--admin-ui --admin-api-key <key>`)
 
 ## Troubleshooting

@@ -216,6 +216,51 @@ pub struct TimestampRequest {
     pub freebird_token: Option<FreebirdToken>,
 }
 
+/// Request to create or retrieve the canonical attestation job for a hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAttestationRequest {
+    /// SHA-256 hash to attest (hex encoded).
+    pub hash: String,
+
+    /// Optional Freebird token for Sybil resistance.
+    #[serde(default)]
+    pub freebird_token: Option<FreebirdToken>,
+}
+
+/// Durable lifecycle state of an attestation job.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AttestationJobStatus {
+    Pending,
+    Retryable,
+    Confirmed,
+    Failed,
+}
+
+/// Stable snapshot returned when creating or reading an attestation job.
+///
+/// The canonical tuple is always present. `signed_attestation` is present only
+/// after the job has reached `confirmed`; pending and failed jobs never expose
+/// an unsigned `SignedAttestation` placeholder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationJobResponse {
+    pub attestation: Attestation,
+    pub status: AttestationJobStatus,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_attestation: Option<SignedAttestation>,
+
+    /// Number of leases issued for this job.
+    pub attempts: u32,
+
+    /// Unix timestamp at which a pending/retryable job is next eligible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_attempt_at: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 /// Freebird token for anonymous authorization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FreebirdToken {

@@ -6,7 +6,7 @@ Witness lets a federation of independent operators co-sign that a hash existed a
 
 ## Features
 
-- **Instant & Free:** Timestamps in 50-150ms with no gas fees
+- **Durable & Free:** Submission returns immediately; leased workers retry quorum signing without gas fees
 - **Threshold Signatures:** Requires multiple independent witnesses to collude to forge
 - **Signature Schemes:** Ed25519 (fast) or BLS12-381 (50% smaller signatures)
 - **Federation:** Independent networks cross-anchor for additional security
@@ -34,10 +34,10 @@ Witness lets a federation of independent operators co-sign that a hash existed a
 # Start the network (gateway + 3 witnesses)
 docker compose up --build
 
-# Timestamp something
+# Attest something (then poll the returned job)
 docker compose exec gateway witness-cli \
   --gateway http://localhost:8080 \
-  timestamp --hash $(echo -n "hello" | sha256sum | awk '{print $1}')
+  attest --hash $(echo -n "hello" | sha256sum | awk '{print $1}')
 ```
 
 ### From Source
@@ -54,16 +54,18 @@ cargo build --release
 # Start network
 ./examples/start.sh
 
-# Timestamp a file
-cargo run -p witness-cli -- timestamp --file README.md
+# Create an attestation job for a file
+cargo run -p witness-cli -- attest --file README.md
 ```
 
 ## Architecture
 
 ```
-Client → Gateway → Witnesses (threshold sign) → Signed Attestation
-           ↓
-      SQLite DB ← Batch Manager → External Anchors
+Client → Gateway → durable job in SQLite
+                    ↓ leased retry worker
+                 Witnesses (threshold sign) → verified result
+                    ↓
+              Batch Manager → External Anchors
 ```
 
 | Component | Description |
@@ -76,14 +78,14 @@ Client → Gateway → Witnesses (threshold sign) → Signed Attestation
 ## CLI Usage
 
 ```bash
-# Timestamp a file
-witness timestamp --file document.pdf
+# Attest a file
+witness attest --file document.pdf
 
-# Timestamp a hash
-witness timestamp --hash abc123...
+# Attest a hash
+witness attest --hash abc123...
 
-# Retrieve existing timestamp
-witness get <hash>
+# Poll job status
+witness status <hash>
 
 # Verify an attestation
 witness verify attestation.json
@@ -98,8 +100,8 @@ witness config
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/timestamp` | Submit hash for timestamping |
-| `GET` | `/v1/timestamp/:hash` | Retrieve existing attestation |
+| `POST` | `/v1/attestations` | Atomically reserve or retrieve an attestation job |
+| `GET` | `/v1/attestations/:hash` | Read a stable job snapshot |
 | `POST` | `/v1/verify` | Verify a signed attestation |
 | `GET` | `/v1/proof/:hash` | Get merkle inclusion proof (light client) |
 | `GET` | `/v1/anchors/:hash` | Get external anchor proofs |
@@ -109,15 +111,21 @@ witness config
 | `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/admin` | Admin dashboard (if enabled and authenticated) |
 
-### Timestamp Request
+### Attestation Job Request
 
 ```bash
-curl -X POST http://localhost:8080/v1/timestamp \
+curl -X POST http://localhost:8080/v1/attestations \
   -H "Content-Type: application/json" \
   -d '{"hash":"a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"}'
 ```
 
-### Response
+New and nonconfirmed jobs return `202 Accepted`. A duplicate already-confirmed
+job returns `200 OK`. Poll `GET /v1/attestations/:hash` until `status` is
+`confirmed`. `pending` and `retryable` responses contain the immutable tuple but
+never an unsigned `SignedAttestation`; `failed` is terminal. A confirmed response
+includes `signed_attestation`.
+
+### Pending response
 
 ```json
 {
@@ -127,16 +135,30 @@ curl -X POST http://localhost:8080/v1/timestamp \
     "network_id": "example-network",
     "sequence": 42
   },
-  "signatures": {
-    "MultiSig": {
-      "signatures": [
-        {"witness_id": "witness-1", "signature": "..."},
-        {"witness_id": "witness-2", "signature": "..."}
-      ]
-    }
-  }
+  "status": "pending",
+  "attempts": 0,
+  "next_attempt_at": 1699454445
 }
 ```
+
+For `retryable`, `next_attempt_at` and a bounded `last_error` describe the next
+worker attempt. Witness outages, invalid responses, timeouts, and temporary BLS
+aggregation failures retry with bounded exponential backoff. The same persisted
+tuple is signed on every attempt.
+
+Batch and transparency-log order follows confirmation availability and batch
+closure, not reservation time: each batch orders its eligible jobs by
+`(sequence, hash)`, while a lower-sequence job that confirms after an earlier
+batch is appended in a later batch. This prevents reservation gaps or old
+timestamps from stranding recovered jobs.
+
+### Breaking deployment migration
+
+The attestation job API replaces the old timestamp API. There are no
+`/v1/timestamp` routes and the bundled CLI no longer has `timestamp` or `get`
+commands. Deploy the migrated gateway database and the new gateway/CLI together;
+older clients receive `404 Not Found`. Jobs left pending before a restart are
+unlocked by migration or reclaimed after lease expiry and resumed by the worker.
 
 ## Configuration
 
@@ -210,7 +232,7 @@ export FREEBIRD_REQUIRED=true  # Reject requests without valid tokens
 export FREEBIRD_CONSUME_TOKENS=true  # Default: consume tokens via /v1/verify (recommended)
 
 # CLI usage
-witness timestamp --file doc.pdf --freebird-token token.json
+witness attest --file doc.pdf --freebird-token token.json
 ```
 
 `token.json` uses the current Freebird verifier token shape:
@@ -336,9 +358,12 @@ Each datacenter hosts witnesses from all networks—no single failure takes down
 
 | Metric | Ed25519 | BLS |
 |--------|---------|-----|
-| Latency | 50-150ms | 60-180ms |
+| Typical worker signing pass | 50-150ms | 60-180ms |
 | Signature size (3 witnesses) | 192 bytes | 96 bytes |
 | Throughput | 100-500 req/s | 80-400 req/s |
+
+API submission latency is separate from signing latency: `POST /v1/attestations`
+only durably reserves the tuple, and clients poll while workers obtain quorum.
 
 ## FAQ
 

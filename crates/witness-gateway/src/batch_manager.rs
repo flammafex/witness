@@ -20,7 +20,7 @@ pub struct BatchManager {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
     witness_client: Arc<WitnessClient>,
-    last_batch_time: Arc<tokio::sync::Mutex<u64>>,
+    last_batch_close_time: Arc<tokio::sync::Mutex<u64>>,
     anchor_manager: Option<Arc<AnchorManager>>,
     federation_client: Option<Arc<FederationClient>>,
 }
@@ -37,7 +37,7 @@ impl BatchManager {
             config,
             storage,
             witness_client,
-            last_batch_time: Arc::new(tokio::sync::Mutex::new(now)),
+            last_batch_close_time: Arc::new(tokio::sync::Mutex::new(now)),
             anchor_manager: None,
             federation_client: None,
         }
@@ -84,14 +84,31 @@ impl BatchManager {
 
     /// Close the current batch and create a new one
     async fn close_batch(&self) -> anyhow::Result<Option<AttestationBatch>> {
-        let mut last_batch_time = self.last_batch_time.lock().await;
+        let mut last_batch_close_time = self.last_batch_close_time.lock().await;
         let now = epoch_secs();
 
-        // Get all unbatched attestations since last batch
-        let attestations = self
+        // No timestamp watermark is used: jobs that confirm after a long retry
+        // remain eligible even when their persisted timestamp predates prior
+        // batches. Storage returns deterministic `(sequence, hash)` order.
+        let candidates = self
             .storage
-            .get_unbatched_attestations(*last_batch_time)
+            .get_unbatched_attestations(&self.config.id)
             .await?;
+        let attestations: Vec<_> = candidates
+            .into_iter()
+            .filter(|attestation| {
+                match witness_core::verify_signed_attestation(attestation, &self.config) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        tracing::error!(
+                            hash = %hex::encode(attestation.attestation.hash),
+                            "Skipping invalid confirmed batch candidate: {error}"
+                        );
+                        false
+                    }
+                }
+            })
+            .collect();
 
         if attestations.is_empty() {
             tracing::debug!("No attestations to batch");
@@ -101,7 +118,7 @@ impl BatchManager {
         tracing::info!(
             "Closing batch with {} attestations (period: {} - {})",
             attestations.len(),
-            *last_batch_time,
+            *last_batch_close_time,
             now
         );
 
@@ -116,28 +133,13 @@ impl BatchManager {
             id: 0, // Will be set by database
             network_id: self.config.id.clone(),
             merkle_root,
-            period_start: *last_batch_time,
+            period_start: *last_batch_close_time,
             period_end: now,
             attestation_count: attestations.len() as u64,
         };
 
         // Store batch
         let batch_id = self.storage.store_batch(&batch, &leaves).await?;
-
-        // Confirm all attestations in the batch (defensive: they should already be confirmed)
-        for attestation in &attestations {
-            if let Err(e) = self
-                .storage
-                .confirm_attestation(&attestation.attestation.hash)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to confirm attestation {} in batch: {}",
-                    hex::encode(attestation.attestation.hash),
-                    e
-                );
-            }
-        }
 
         // Record metrics
         metrics::record_batch();
@@ -149,8 +151,8 @@ impl BatchManager {
             hex::encode(merkle_root)
         );
 
-        // Update last batch time
-        *last_batch_time = now;
+        // Update period metadata; candidate eligibility is independent of it.
+        *last_batch_close_time = now;
 
         let final_batch = AttestationBatch {
             id: batch_id as u64,

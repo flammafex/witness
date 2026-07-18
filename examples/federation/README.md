@@ -73,24 +73,24 @@ Store cross-anchors locally
 
 ## How Federation Works
 
-### 1. Normal Timestamping (Phase 1)
+### 1. Durable Attestation Job
 
 ```bash
 # Client submits hash to Network A
-curl -X POST http://localhost:9001/v1/timestamp \
+curl -X POST http://localhost:9001/v1/attestations \
   -H "Content-Type: application/json" \
   -d '{"hash":"..."}'
 
-# Gateway fans out to witnesses
-# Collects threshold signatures (2 of 3)
-# Returns signed attestation
+# Gateway durably reserves one tuple and returns pending/retryable status
+# A leased worker collects and verifies threshold signatures (2 of 3)
+# Poll GET /v1/attestations/:hash until confirmed
 ```
 
 ### 2. Batch Closing (every 60 seconds)
 
 ```
 # Gateway automatically:
-1. Collects all attestations since last batch
+1. Collects every confirmed, complete, unbatched attestation (including resumed older jobs)
 2. Builds merkle tree from attestation hashes
 3. Computes merkle root
 4. Stores batch in database
@@ -181,9 +181,9 @@ tail -f examples/federation/gateway-a.log
 # 1. Start networks
 ./examples/federation/start.sh
 
-# 2. Timestamp on Network A
+# 2. Create an attestation job on Network A
 cargo run -p witness-cli -- --gateway http://localhost:9001 \
-  timestamp --file README.md --save /tmp/a.json
+  attest --file README.md --save /tmp/a.json
 
 # 3. Wait 60 seconds for batch
 
@@ -206,9 +206,9 @@ Test network resilience:
 # Kill one peer network
 kill $(cat examples/federation/gateway-b.pid)
 
-# Timestamp on Network A
+# Create another job on Network A
 cargo run -p witness-cli -- --gateway http://localhost:9001 \
-  timestamp --file test.txt
+  attest --file test.txt
 
 # After 60 seconds:
 # - Batch still closes

@@ -5,9 +5,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use witness_core::NetworkConfig;
 use witness_gateway::{
-    admin::AdminState, anchor_manager::AnchorManager, batch_manager::BatchManager,
-    federation_client::FederationClient, freebird::FreebirdClient, metrics, reconciler,
-    server::GatewayServer, storage::Storage, witness_client::WitnessClient,
+    admin::AdminState,
+    anchor_manager::AnchorManager,
+    batch_manager::BatchManager,
+    federation_client::FederationClient,
+    freebird::FreebirdClient,
+    metrics,
+    reconciler::{AttestationWorker, Reconciler},
+    server::GatewayServer,
+    storage::Storage,
+    witness_client::WitnessClient,
 };
 
 fn is_non_loopback_host(host: &str) -> bool {
@@ -158,8 +165,8 @@ async fn main() -> Result<()> {
         storage.clone(),
     ));
 
-    // Witness HTTP client shared between batch-manager STH signing and the
-    // request-time signing path inside `GatewayServer::run`.
+    // Witness HTTP client shared between the leased attestation worker and
+    // batch-manager STH signing.
     let witness_client = Arc::new(WitnessClient::new());
 
     // Initialize batch manager (Phase 2) with anchor manager and federation client
@@ -226,7 +233,7 @@ async fn main() -> Result<()> {
     if freebird_client.is_none() {
         tracing::warn!(
             "SECURITY: Freebird is disabled (no FREEBIRD_VERIFIER_URL). \
-             Timestamp endpoint has no proof-of-work/humanity protection."
+             Attestation endpoint has no proof-of-work/humanity protection."
         );
     }
     if network_config.federation.enabled && network_config.federation.inbound_auth_token.is_none() {
@@ -266,8 +273,13 @@ async fn main() -> Result<()> {
     let cancel = tokio_util::sync::CancellationToken::new();
     let cancel_clone = cancel.clone();
     let reconciler_cancel = cancel.clone();
-    let reconciler = reconciler::Reconciler::new(storage.clone(), reconciler_cancel);
-    tokio::spawn(reconciler.run());
+    let worker = AttestationWorker::new(
+        network_config.clone(),
+        storage.clone(),
+        witness_client.clone(),
+    );
+    let reconciler = Reconciler::new(worker, reconciler_cancel);
+    let reconciler_handle = tokio::spawn(reconciler.run());
 
     // Start server
     let server = GatewayServer::new(
@@ -320,9 +332,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    server
-        .run(&args.host, args.port, admin_state, admin_api_key, cancel)
-        .await?;
+    let server_result = server
+        .run(
+            &args.host,
+            args.port,
+            admin_state,
+            admin_api_key,
+            cancel.clone(),
+        )
+        .await;
+    cancel.cancel();
+    if let Err(error) = reconciler_handle.await {
+        tracing::warn!("Attestation worker task ended unexpectedly: {error}");
+    }
+    server_result?;
 
     Ok(())
 }

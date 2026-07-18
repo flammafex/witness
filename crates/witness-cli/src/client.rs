@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
+use witness_core::types::{AttestationJobResponse, CreateAttestationRequest};
 use witness_core::{
     ExternalAnchorProof, FreebirdToken, LogConsistencyProof, NetworkConfig, ProofBundle,
-    SignedAttestation, SignedTreeHead, TimestampRequest, TimestampResponse,
+    SignedTreeHead,
 };
 
 pub struct WitnessClient {
@@ -24,14 +25,14 @@ impl WitnessClient {
         }
     }
 
-    pub async fn timestamp(
+    pub async fn create_attestation(
         &self,
         hash: &str,
         freebird_token: Option<FreebirdToken>,
-    ) -> Result<SignedAttestation> {
-        let url = format!("{}/v1/timestamp", self.gateway_url);
+    ) -> Result<AttestationJobResponse> {
+        let url = format!("{}/v1/attestations", self.gateway_url);
 
-        let request = TimestampRequest {
+        let request = CreateAttestationRequest {
             hash: hash.to_string(),
             freebird_token,
         };
@@ -50,16 +51,16 @@ impl WitnessClient {
             anyhow::bail!("Gateway returned error {}: {}", status, error_text);
         }
 
-        let timestamp_response: TimestampResponse = response
+        let job: AttestationJobResponse = response
             .json()
             .await
             .context("Failed to parse gateway response")?;
 
-        Ok(timestamp_response.attestation)
+        Ok(job)
     }
 
-    pub async fn get_timestamp(&self, hash: &str) -> Result<SignedAttestation> {
-        let url = format!("{}/v1/timestamp/{}", self.gateway_url, hash);
+    pub async fn get_attestation(&self, hash: &str) -> Result<AttestationJobResponse> {
+        let url = format!("{}/v1/attestations/{}", self.gateway_url, hash);
 
         let response = self
             .client
@@ -74,12 +75,12 @@ impl WitnessClient {
             anyhow::bail!("Gateway returned error {}: {}", status, error_text);
         }
 
-        let timestamp_response: TimestampResponse = response
+        let job: AttestationJobResponse = response
             .json()
             .await
             .context("Failed to parse gateway response")?;
 
-        Ok(timestamp_response.attestation)
+        Ok(job)
     }
 
     pub async fn get_config(&self) -> Result<serde_json::Value> {
@@ -246,5 +247,63 @@ impl WitnessClient {
             .context("Failed to parse gateway response")?;
 
         Ok(anchors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::Path, routing::get, routing::post, Json, Router};
+    use witness_core::types::AttestationJobStatus;
+    use witness_core::Attestation;
+
+    fn pending_job() -> AttestationJobResponse {
+        AttestationJobResponse {
+            attestation: Attestation {
+                hash: [7u8; 32],
+                timestamp: 100,
+                network_id: "network".to_string(),
+                sequence: 1,
+            },
+            status: AttestationJobStatus::Pending,
+            signed_attestation: None,
+            attempts: 0,
+            next_attempt_at: Some(100),
+            last_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn client_uses_attestation_job_routes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected_hash = hex::encode([7u8; 32]);
+        let app = Router::new()
+            .route("/v1/attestations", post(|| async { Json(pending_job()) }))
+            .route(
+                "/v1/attestations/:hash",
+                get(move |Path(hash): Path<String>| {
+                    let expected_hash = expected_hash.clone();
+                    async move {
+                        assert_eq!(hash, expected_hash);
+                        Json(pending_job())
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = WitnessClient::new(&format!("http://{address}"));
+        let created = client
+            .create_attestation(&hex::encode([7u8; 32]), None)
+            .await
+            .unwrap();
+        assert_eq!(created.status, AttestationJobStatus::Pending);
+        let fetched = client
+            .get_attestation(&hex::encode([7u8; 32]))
+            .await
+            .unwrap();
+        assert_eq!(fetched.attestation, created.attestation);
+
+        server.abort();
     }
 }

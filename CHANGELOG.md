@@ -7,6 +7,25 @@ stable API policy is published.
 
 ## Unreleased
 
+## 0.6.5 - 2026-07-18
+
+### Added
+
+- Durable, idempotent attestation jobs with leased recovery and bounded retry
+  backoff across quorum outages and gateway restarts.
+
+### Changed
+
+- **Breaking:** Replaced `POST`/`GET /v1/timestamp` with
+  `POST`/`GET /v1/attestations`. Clients must submit and poll attestation jobs.
+- Confirmation is now gated on local threshold-signature verification; only
+  confirmed canonical attestations enter batches, logs, proofs, and bundles.
+
+### Fixed
+
+- Duplicate submissions now reuse one atomically reserved canonical tuple and
+  sequence, including while work is pending or retried.
+
 ## 0.6.0 - 2026-06-26
 
 ### Changed

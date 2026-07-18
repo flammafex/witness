@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Witness Visualizer</title>
+    <title>Witness: Federatable Anonymous Quorum Timestamper</title>
     <style>
         :root {
             --bg: #0a0a0a;
@@ -24,6 +24,10 @@
             flex-direction: column;
             align-items: center;
             padding: 2rem;
+        }
+        a {
+            color: var(--accent);
+            text-decoration: none;
         }
         h1 {
             font-size: 1.5rem;
@@ -102,15 +106,156 @@
             color: var(--accent);
             margin-bottom: 2rem;
         }
+
+        /* ---- Landing section ---- */
+        .landing {
+            width: 100%;
+            max-width: 800px;
+            border-top: 1px solid var(--border);
+            margin-top: 4rem;
+            padding-top: 4rem;
+        }
+        .badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0.2rem 0.7rem;
+            margin-bottom: 1.25rem;
+        }
+        .landing h2 {
+            font-size: 1.75rem;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.01em;
+        }
+        .landing h2 .accent { color: var(--accent); }
+        .landing .lead {
+            color: var(--text-dim);
+            font-size: 0.95rem;
+            line-height: 1.6;
+            margin-bottom: 2.5rem;
+            max-width: 60ch;
+        }
+        .landing h3 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            margin: 3rem 0 1rem;
+            font-weight: 600;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.75rem;
+        }
+        .feature {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .feature .label {
+            color: var(--accent);
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
+        .feature .desc {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: stretch;
+            gap: 0.5rem;
+            list-style: none;
+        }
+        .flow li {
+            flex: 1 1 140px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.85rem;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            line-height: 1.45;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+        .flow .step-num {
+            color: var(--accent);
+            font-weight: 700;
+            font-size: 0.75rem;
+        }
+        .flow .step-title {
+            color: var(--text);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .flow .arrow {
+            align-self: center;
+            color: var(--border);
+            flex: 0 0 auto;
+        }
+        pre.code {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-x: auto;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            color: var(--text);
+        }
+        pre.code .c { color: var(--text-dim); }
+        pre.code .k { color: var(--accent); }
+        pre.code .s { color: var(--success); }
+        .note {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            margin-top: 0.6rem;
+        }
+        footer.links {
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.25rem;
+            font-size: 0.8rem;
+        }
+        footer.links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--border);
+            transition: color 0.15s ease;
+        }
+        footer.links a:hover { color: var(--accent); }
+        @media (max-width: 540px) {
+            body { padding: 1.25rem; }
+            .flow .arrow { display: none; }
+        }
     </style>
 </head>
 <body>
-    <h1><span>Witness</span> Visualizer</h1>
-    <p class="subtitle">Real-time attestation events</p>
+    <img src="church.png" width=64 alt="The Carpocratian Church presents">
+        <p style="text-align: center;"><br><a href="https://carpocratian.org">The Carpocratian Church of<br>
+        Commonality & Equality</a></span><br><br>
+        Presents<br><br></p>
+    <h1>🙌 <span>Witness</span></h1>
+    <p class="subtitle">Federatable anonymous quorum timestamper</p>
 
     <div class="status">
         <span class="dot" id="status-dot"></span>
-        <span id="status-text">Connecting...</span>
+        <span id="status-text">Connecting to The Metacan City...</span>
     </div>
 
     <div class="counter" id="counter">0</div>
@@ -122,6 +267,96 @@
     <audio id="chime" preload="auto">
         <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp6WgXBjYXKBjpqfmIx+cGZqd4WSmp2WjH5wZmp3hZKanZaMfnBmaneFlJqdlox+cGZqd4WUmp2Wi35wZWl2hZSanZaLfnBlaXaFlJqdm4t+cGVpdoWUmpybi35wZWl2hZOam5qLfnBlaXaFk5qbmot+cGVpdoWTmpuai35wZWl2hZOam5qLfnBlaXaFk5qbmop+cGVpdoWTmpuain5wZWl2hZOam5qKfnBlaXaFk5qbmop9cGRodYWTmpuZin1wZGh1hZKZm5mKfXBkaHWFkpmamYl9cGRodIWSmZqZiX1wZGh0hZKZmpmJfXBkaHSFkpmamYl9cGRodIWSmZmYiH1vY2d0hJKZmZiIfW9jZ3SEkpiZmId9b2NndISSmJmYh31vY2d0hJKYmZiHfW9jZ3SEkpiZmId9b2NndISSmJiXh31vY2d0hJKYmJeHfW9jZ3SElJiYl4d9b2NndISSmJiXh31vY2Z0hJKYmJeHfG5iZnOEkpiYl4d8bmJmc4SSmJeWhnxuYmZzhJKYl5aGfG5iZnOEkpiXloZ8bmJmc4OSmJeWhnxuYmZzg5KYl5aGfG5iZnODkpiXloV8bmJmc4OSmJeVhXxuYWVyg5KXlpWFfG5hZXKDkpeWlYV8bmFlcoOSl5aVhXxuYWVyg5GXlpWFfG5hZXKDkZeWlYV8bmFlcoORl5WUhHxuYGRxg5GXlZSEfG5gZHGDkZeVlIR8bWBkcYORlpWUhHttYGRxg5GWlZSEe21gZHGDkZaVlIN7bV9jcIOQlpSUg3ttX2Nwg5CWlJSDe21fY3CDkJaUk4N7bV9jcIOQlpSTg3ttX2Nwg5CVlJODe21fY3CDkJWUk4N7bV9jcIOQlZSTg3tsXmJvgo+Vk5KCe2xeYm+Cj5WTkoJ7bF5ib4KPlZOSgntsXmJvgo+VkpKCe2xeYm+Cj5WSkYJ7a11hboKPlZKRgXtrXWFugo+UkpGBe2tdYW6Cj5SRkYF7al1hboKPlJGRgXtqXWBtgo6UkZGAe2pdYG2CjpSRkIB6aVxgbYKOk5GQgHppXGBtgo6TkZCAemlcYG2CjpORkIB6aVxgbYKOk5GQgHppXGBtgo6TkI+AemhbX2yCjpOQj4B6aFtfbIKNk5CPf3poW19sgo2SkI9/emhbX2yCjZKQj396aFtfbIKNkpCPf3poW19sgo2SkI9/emhbX2yCjZKQj396aFtfbIKNkpCPf3poW19sgo2SkI9/emhbX2yCjZKQj396aFtfbIKNkpCPfnlnWl5rgY2SkI9+eWdaXmuBjZKQjn55Z1pea4GNko+OfnlnWl5rgY2Sj45+eWdaXmuBjZKPjn55Z1peaoGMko+OfnhnWV5qgYySj419eGdZXmqBjJGPjX14Z1lean+MkY+NfXhnWV5qf4yRj418eGdZXmp/jJGOjXx4ZlhcaX+MkY6NfHhmWFxpf4yQjo18eGZYXGl/jJCOjHx4ZlhcaX+MkI6MfHhmWFxpf4yQjYx8eGZYXGl/jJCNjHx4ZlhcaX+MkI2MfHhmWFxpf4yQjYx8eGZYXGl/jJCNi3x3ZVdbaH6LkI2Le3dlV1tofouPjYt7d2VXW2h+i4+Ni3t3ZVdbaH6Lj42Le3dlV1tofouPjYt7d2VXW2h+i4+Mi3t3ZVdbaH6Lj4yLe3dlV1tofouPjIt7d2VXW2h+i4+Mi3t3ZVdbaH6Lj4yLe3dlV1tnfouPjIt7d2RWVmd9io6LindnZVZWZn2KjYt6d2ZlVlZmfYqMi3p3ZmVWVmZ9ioyKendlVFVlfIqMint3ZVRVZX2Ki4p6d2VUVmV8ioqKendlVFZlfIqKinp3ZVRVZX2Kiop6d2VUVmV8ioqKendkU1RkfImKiXl2ZFRUZHyJiYl5dmRUVGR8iYmJeXZkVFRkfImJiXl2ZFRUZHyJiYl5dmRUVGR8iYmIeXZkVFRjfImJiHl2ZFRTYnyIiYh4dWNTU2J8iIiId3VjU1NifIiIiHd1Y1NTYnyIiIh3dWNTU2J8iIiId3VjU1NifIiIiHd1Y1NTYnyIiIh3dWNTU2J8iIeHd3VjU1NifIiHh3d1Y1NTYnyIh4d3dWNTU2J8iIeHd3U=" type="audio/wav">
     </audio>
+
+    <section class="landing">
+        <span class="badge">pre-1.0 · unaudited</span>
+        <h2><span class="accent">Witness</span></h2>
+        <p class="lead">A content-private, accountless quorum timestamper. A federation of independent witness nodes threshold-signs an attestation that a SHA-256 hash existed at a particular time. Clients submit only hashes — never content — and need no account.</p>
+
+        <h3>Key features</h3>
+        <div class="features">
+            <div class="feature">
+                <div class="label">Quorum threshold signing</div>
+                <div class="desc">N-of-M witnesses must co-sign; collusion required to forge.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Instant &amp; free</div>
+                <div class="desc">50–150ms latency, no gas fees.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Content-private</div>
+                <div class="desc">Only SHA-256 hashes are submitted, never the content itself.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Accountless</div>
+                <div class="desc">No accounts, logins, identities, or wallets required.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Dual signature schemes</div>
+                <div class="desc">Ed25519 (fast) or BLS12-381 (aggregated, 96 bytes).</div>
+            </div>
+            <div class="feature">
+                <div class="label">External anchoring</div>
+                <div class="desc">Batches committed to Internet Archive, Trillian, DNS, or Ethereum.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Federation</div>
+                <div class="desc">Independent networks can cross-anchor batches.</div>
+            </div>
+            <div class="feature">
+                <div class="label">Auditable</div>
+                <div class="desc">RFC 9162 Signed Tree Head chains walked by an independent auditor.</div>
+            </div>
+        </div>
+
+        <h3>How it works</h3>
+        <ol class="flow">
+            <li>
+                <span class="step-num">01</span>
+                <span class="step-title">Submit hash</span>
+                <span>Client posts a SHA-256 hash to the gateway.</span>
+            </li>
+            <li class="arrow" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </li>
+            <li>
+                <span class="step-num">02</span>
+                <span class="step-title">Batch &amp; route</span>
+                <span>Gateway batches pending hashes and routes them to witnesses.</span>
+            </li>
+            <li class="arrow" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </li>
+            <li>
+                <span class="step-num">03</span>
+                <span class="step-title">Threshold sign</span>
+                <span>A quorum of witnesses threshold-signs an attestation.</span>
+            </li>
+            <li class="arrow" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </li>
+            <li>
+                <span class="step-num">04</span>
+                <span class="step-title">Return / anchor</span>
+                <span>Attestation returned to client; batches optionally anchored externally.</span>
+            </li>
+        </ol>
+
+        <h3>Quick start</h3>
+        <pre class="code"><span class="c"># Assumes a gateway running locally on port 8080</span>
+<span class="k">curl</span> -X POST http://localhost:8080/v1/attestations \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}'</span></pre>
+        <p class="note">The hash above is the SHA-256 of an empty string — replace it with your own.</p>
+
+        <footer class="links">
+            <a href="../README.md">README</a>
+            <a href="../docs/">docs/</a>
+            <a href="../SECURITY.md">SECURITY.md</a>
+            <a href="../PRODUCTION.md">PRODUCTION.md</a>
+            <a href="https://git.carpocratian.org/sibyl/witness" rel="noopener">source</a>
+        </footer>
+    </section>
 
     <script>
         const statusDot = document.getElementById('status-dot');
@@ -138,12 +373,11 @@
             statusDot.className = 'dot connecting';
             statusText.textContent = 'Connecting...';
 
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
+            ws = new WebSocket(`https://gateway.metacan.org/ws/events`);
 
             ws.onopen = () => {
                 statusDot.className = 'dot connected';
-                statusText.textContent = 'Connected';
+                statusText.textContent = 'Connected to 💀 metacan.org';
             };
 
             ws.onclose = () => {

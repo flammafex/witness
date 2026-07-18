@@ -10,60 +10,40 @@ pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<(
         anyhow::bail!("Invalid hash length: must be 64 hex characters (32 bytes)");
     }
 
-    // Get timestamp
+    // Get durable attestation job status.
     if output_format == "text" {
-        println!("Looking up timestamp...");
+        println!("Looking up attestation job...");
     }
 
     let client = WitnessClient::new(gateway_url);
-    let attestation = client.get_timestamp(hash).await?;
+    let job = client.get_attestation(hash).await?;
 
     // Output results
     match output_format {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&attestation)?);
+            println!("{}", serde_json::to_string_pretty(&job)?);
         }
         "text" => {
-            println!("✓ Found timestamp");
+            println!("Found attestation job");
             println!();
-            println!("Hash:      {}", hex::encode(attestation.attestation.hash));
+            println!("Status:    {:?}", job.status);
+            println!("Hash:      {}", hex::encode(job.attestation.hash));
             println!(
                 "Timestamp: {} ({})",
-                attestation.attestation.timestamp,
-                format_timestamp(attestation.attestation.timestamp)
+                job.attestation.timestamp,
+                format_timestamp(job.attestation.timestamp)
             );
-            println!("Network:   {}", attestation.attestation.network_id);
-            println!("Sequence:  {}", attestation.attestation.sequence);
-            println!();
-
-            // Display signature information based on type
-            if attestation.is_aggregated() {
-                println!(
-                    "Signatures: BLS aggregated signature from {} witnesses",
-                    attestation.signature_count()
-                );
-                if let witness_core::signature_scheme::AttestationSignatures::Aggregated {
-                    signers,
-                    ..
-                } = &attestation.signatures
-                {
-                    for signer in signers {
-                        println!("  - {}", signer);
-                    }
-                }
-            } else {
-                println!(
-                    "Signatures: {} witnesses signed",
-                    attestation.signature_count()
-                );
-                if let witness_core::signature_scheme::AttestationSignatures::MultiSig {
-                    signatures,
-                } = &attestation.signatures
-                {
-                    for sig in signatures {
-                        println!("  - {}", sig.witness_id);
-                    }
-                }
+            println!("Network:   {}", job.attestation.network_id);
+            println!("Sequence:  {}", job.attestation.sequence);
+            println!("Attempts:  {}", job.attempts);
+            if let Some(next_attempt_at) = job.next_attempt_at {
+                println!("Next try:  {}", next_attempt_at);
+            }
+            if let Some(error) = &job.last_error {
+                println!("Last error: {}", error);
+            }
+            if let Some(attestation) = &job.signed_attestation {
+                println!("Signatures: {} verified", attestation.signature_count());
             }
         }
         _ => {

@@ -41,3 +41,7 @@ hyper = { version = "0.14", features = ["client"] }
 tokio-util = "0.7"
 dashmap = "5"
 rand.workspace = true
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
+blst.workspace = true

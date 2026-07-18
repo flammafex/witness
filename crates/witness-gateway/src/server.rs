@@ -22,14 +22,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use tower_http::cors::CorsLayer;
+use witness_core::types::{AttestationJobResponse, AttestationJobStatus, CreateAttestationRequest};
 use witness_core::{
     merkle::{consistency_path, inclusion_path},
     Attestation, BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
-    LogConsistencyProof, MerkleTree, NetworkConfig, ProofBundle, SignResponse, SignatureScheme,
-    SignedAttestation, SignedTreeHead, TimestampRequest, TimestampResponse, VerifyRequest,
-    VerifyResponse, WitnessInfo,
+    LogConsistencyProof, MerkleTree, NetworkConfig, ProofBundle, SignResponse, SignedTreeHead,
+    VerifyRequest, VerifyResponse, WitnessInfo,
 };
 
 use crate::admin::{admin_router, AdminState};
@@ -67,15 +67,15 @@ pub struct AttestationEvent {
 // Focused state structs
 // ============================================================================
 
-/// State for /v1/timestamp POST — includes rate limiter and Freebird.
+/// State for `POST /v1/attestations` — includes admission controls.
 #[derive(Clone)]
-struct TimestampState {
+struct AttestationState {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
-    witness_client: Arc<WitnessClient>,
     freebird_client: Option<Arc<FreebirdClient>>,
     event_tx: broadcast::Sender<AttestationEvent>,
     rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    creation_locks: Arc<DashMap<[u8; 32], Arc<Mutex<()>>>>,
     behind_proxy: bool,
 }
 
@@ -84,7 +84,6 @@ struct TimestampState {
 struct FederationState {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
-    witness_client: Arc<WitnessClient>,
     rate_limiter: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     behind_proxy: bool,
     auth_store: Arc<FederationAuthStore>,
@@ -289,8 +288,6 @@ impl GatewayServer {
         cancel: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
         let (event_tx, _) = broadcast::channel(256);
-        let witness_client = Arc::new(WitnessClient::new());
-
         let core_state = CoreState {
             config: self.config.clone(),
             storage: self.storage.clone(),
@@ -298,15 +295,15 @@ impl GatewayServer {
             ws_auth_token: self.ws_auth_token.clone(),
         };
 
-        let timestamp_state = TimestampState {
+        let attestation_state = AttestationState {
             config: self.config.clone(),
             storage: self.storage.clone(),
-            witness_client: witness_client.clone(),
             freebird_client: self.freebird_client.clone(),
             event_tx: event_tx.clone(),
             rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
                 NonZeroU32::new(30).unwrap(),
             ))),
+            creation_locks: Arc::new(DashMap::new()),
             behind_proxy: self.behind_proxy,
         };
 
@@ -321,7 +318,6 @@ impl GatewayServer {
         let federation_state = FederationState {
             config: self.config.clone(),
             storage: self.storage.clone(),
-            witness_client: witness_client.clone(),
             rate_limiter: Arc::new(RateLimiter::dashmap(Quota::per_minute(
                 NonZeroU32::new(10).unwrap(),
             ))),
@@ -357,7 +353,7 @@ impl GatewayServer {
             .route("/health", get(health_handler))
             .route("/v1/config", get(config_handler))
             .route("/v1/network", get(network_config_handler))
-            .route("/v1/timestamp/:hash", get(get_timestamp_handler))
+            .route("/v1/attestations/:hash", get(get_attestation_handler))
             .route("/v1/verify", post(verify_handler))
             .route("/v1/anchors/:hash", get(get_anchors_handler))
             .route("/v1/proof/:hash", get(get_proof_handler))
@@ -370,8 +366,8 @@ impl GatewayServer {
             .with_state(core_state)
             .merge(
                 Router::new()
-                    .route("/v1/timestamp", post(timestamp_handler))
-                    .with_state(timestamp_state),
+                    .route("/v1/attestations", post(create_attestation_handler))
+                    .with_state(attestation_state),
             )
             .merge(
                 Router::new()
@@ -513,13 +509,8 @@ fn admin_unauthorized_response() -> Response {
     response
 }
 
-// ============================================================================
-// Shared signature-collection helper
-// ============================================================================
-
-/// Request signatures from all witnesses concurrently, stopping as soon as
-/// `threshold` successful responses have been received. Tasks for the
-/// remaining witnesses are cancelled via `JoinSet::abort_all`.
+// Retained for Phase 3 batch/STH signing. Public attestation jobs do not use
+// this response-counting helper; their worker validates every signature.
 pub(crate) async fn collect_signatures_until_threshold(
     witnesses: &[WitnessInfo],
     attestation: &Attestation,
@@ -532,15 +523,11 @@ pub(crate) async fn collect_signatures_until_threshold(
         let witness = witness.clone();
         let attestation = attestation.clone();
         let client = client.clone();
-
         set.spawn(async move {
             match client.request_signature(&witness, &attestation).await {
-                Ok(resp) => {
-                    tracing::info!("Got signature from witness: {}", witness.id);
-                    Some(resp)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to get signature from {}: {}", witness.id, e);
+                Ok(response) => Some(response),
+                Err(error) => {
+                    tracing::warn!(witness = %witness.id, "Batch signature request failed: {error}");
                     None
                 }
             }
@@ -548,7 +535,6 @@ pub(crate) async fn collect_signatures_until_threshold(
     }
 
     let mut responses = Vec::new();
-
     while let Some(result) = set.join_next().await {
         if let Ok(Some(response)) = result {
             metrics::record_signatures(&response.witness_id);
@@ -559,7 +545,6 @@ pub(crate) async fn collect_signatures_until_threshold(
             }
         }
     }
-
     responses
 }
 
@@ -592,31 +577,21 @@ async fn network_config_handler(State(state): State<CoreState>) -> impl IntoResp
     Json((*state.config).clone())
 }
 
-async fn get_timestamp_handler(
+async fn get_attestation_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    tracing::debug!("Looking up timestamp for hash: {}", hash);
+    tracing::debug!("Looking up attestation job for hash: {}", hash);
 
     let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
     let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
-    let attestation = state
+    let job = state
         .storage
-        .get_attestation(&hash_array)
+        .get_job(&hash_array)
         .await?
         .ok_or(AppError::NotFound)?;
-
-    let status = state
-        .storage
-        .get_attestation_status(&hash_array)
-        .await?
-        .unwrap_or_else(|| "confirmed".to_string());
-
-    Ok(Json(TimestampResponse {
-        attestation,
-        status,
-    }))
+    Ok(Json(job))
 }
 
 async fn verify_handler(
@@ -702,7 +677,15 @@ async fn get_proof_handler(
     tracing::debug!("Looking up merkle proof for hash: {}", hash);
 
     let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let _: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let job = state
+        .storage
+        .get_job(&hash_array)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if job.status != AttestationJobStatus::Confirmed || job.signed_attestation.is_none() {
+        return Err(AppError::NotFound);
+    }
 
     let batch_info = state
         .storage
@@ -743,11 +726,12 @@ async fn get_proof_bundle_handler(
     let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
     let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
-    let signed_attestation = state
+    let job = state
         .storage
-        .get_attestation(&hash_array)
+        .get_job(&hash_array)
         .await?
         .ok_or(AppError::NotFound)?;
+    let signed_attestation = job.signed_attestation.ok_or(AppError::NotFound)?;
 
     let mut batch_inclusion = None;
     let mut cross_anchors = Vec::new();
@@ -929,170 +913,101 @@ async fn ws_events_handler(
 }
 
 // ============================================================================
-// TimestampState handler
+// AttestationState handler
 // ============================================================================
 
-async fn timestamp_handler(
-    State(state): State<TimestampState>,
+async fn create_attestation_handler(
+    State(state): State<AttestationState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
-    Json(request): Json<TimestampRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    let _timer = RequestTimer::new("timestamp");
-
-    let client_ip = real_ip(&headers, addr, state.behind_proxy);
-
-    if state.rate_limiter.check_key(&client_ip).is_err() {
-        tracing::warn!("Timestamp rate limit exceeded for IP: {}", client_ip);
-        return Err(AppError::RateLimited);
-    }
-
-    tracing::info!("Received timestamp request for hash: {}", request.hash);
-
-    if let Some(ref freebird) = state.freebird_client {
-        match &request.freebird_token {
-            Some(token) => {
-                freebird.verify(token).await?;
-                tracing::info!("Freebird token verified for hash: {}", request.hash);
-            }
-            None if freebird.is_required() => {
-                return Err(AppError::FreebirdTokenRequired);
-            }
-            None => {
-                tracing::debug!("No Freebird token provided (permissive mode)");
-            }
-        }
-    }
-
+    Json(request): Json<CreateAttestationRequest>,
+) -> Result<(StatusCode, Json<AttestationJobResponse>), AppError> {
+    let _timer = RequestTimer::new("attestations");
     let hash_bytes = hex::decode(&request.hash).map_err(|_| AppError::InvalidHash)?;
     let hash: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
 
-    if state.storage.check_duplicate(&hash).await? {
-        tracing::info!("Hash already timestamped: {}", request.hash);
-        let existing = state
-            .storage
-            .get_attestation(&hash)
-            .await?
-            .ok_or(AppError::InternalError)?;
-        let status = state
-            .storage
-            .get_attestation_status(&hash)
-            .await?
-            .unwrap_or_else(|| "confirmed".to_string());
-
-        if status == "pending" {
-            return Ok((
-                StatusCode::ACCEPTED,
-                Json(TimestampResponse {
-                    attestation: existing,
-                    status: "pending".to_string(),
-                }),
-            ));
-        }
-
-        return Ok((
-            StatusCode::OK,
-            Json(TimestampResponse {
-                attestation: existing,
-                status: "confirmed".to_string(),
-            }),
-        ));
+    if let Some(job) = state.storage.get_job(&hash).await? {
+        return Ok((job_http_status(job.status), Json(job)));
     }
 
-    let sequence = state.storage.get_next_sequence(&state.config.id).await?;
-    let attestation = Attestation::new(hash, state.config.id.clone(), sequence);
-    tracing::debug!("Created attestation: {}", attestation);
+    // Serialize admission and reservation for the same hash within this
+    // gateway process. The database remains the cross-process canonicality
+    // authority; the second lookup avoids consuming one-use admission tokens
+    // for ordinary retries and local races.
+    let creation_lock = state
+        .creation_locks
+        .entry(hash)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+    let creation_guard = creation_lock.lock().await;
+    match state.storage.get_job(&hash).await {
+        Ok(Some(job)) => {
+            drop(creation_guard);
+            state.creation_locks.remove(&hash);
+            return Ok((job_http_status(job.status), Json(job)));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            drop(creation_guard);
+            state.creation_locks.remove(&hash);
+            return Err(AppError::from(error));
+        }
+    }
 
-    let signed = SignedAttestation::new(attestation.clone());
-    state
-        .storage
-        .store_attestation(&signed, Some("pending"))
-        .await?;
+    let reservation_result: Result<_, AppError> = async {
+        let client_ip = real_ip(&headers, addr, state.behind_proxy);
 
-    let responses = collect_signatures_until_threshold(
-        &state.config.witnesses,
-        &attestation,
-        &state.witness_client,
-        state.config.threshold,
-    )
+        if state.rate_limiter.check_key(&client_ip).is_err() {
+            tracing::warn!("Attestation rate limit exceeded for IP: {}", client_ip);
+            return Err(AppError::RateLimited);
+        }
+
+        tracing::info!("Received attestation request for hash: {}", request.hash);
+
+        if let Some(ref freebird) = state.freebird_client {
+            match &request.freebird_token {
+                Some(token) => {
+                    freebird.verify(token).await?;
+                    tracing::info!("Freebird token verified for hash: {}", request.hash);
+                }
+                None if freebird.is_required() => {
+                    return Err(AppError::FreebirdTokenRequired);
+                }
+                None => {
+                    tracing::debug!("No Freebird token provided (permissive mode)");
+                }
+            }
+        }
+
+        state
+            .storage
+            .reserve_job(&hash, &state.config.id, epoch_secs())
+            .await
+            .map_err(AppError::from)
+    }
     .await;
+    drop(creation_guard);
+    state.creation_locks.remove(&hash);
+    let reservation = reservation_result?;
 
-    let signed = match state.config.signature_scheme {
-        SignatureScheme::Ed25519 => {
-            let mut signed = SignedAttestation::new(attestation.clone());
-            for response in responses {
-                signed.add_signature(response.witness_id, response.signature);
-            }
-            tracing::info!(
-                "Collected {} Ed25519 signatures (threshold: {})",
-                signed.signature_count(),
-                state.config.threshold
-            );
-            if signed.signature_count() < state.config.threshold {
-                return Err(AppError::InsufficientSignatures {
-                    got: signed.signature_count(),
-                    required: state.config.threshold,
-                });
-            }
-            signed
-        }
-        SignatureScheme::BLS => {
-            let count = responses.len();
-            if count < state.config.threshold {
-                return Err(AppError::InsufficientSignatures {
-                    got: count,
-                    required: state.config.threshold,
-                });
-            }
-            let signer_ids: Vec<String> = responses.iter().map(|r| r.witness_id.clone()).collect();
-            let individual_signatures: Vec<Vec<u8>> =
-                responses.into_iter().map(|r| r.signature).collect();
-            tracing::info!(
-                "Collected {} BLS signatures to aggregate (threshold: {})",
-                count,
-                state.config.threshold
-            );
-            let aggregated = witness_core::aggregate_signatures_bls(&individual_signatures)
-                .map_err(|e| {
-                    tracing::error!("BLS aggregation failed: {}", e);
-                    AppError::InvalidSignature
-                })?;
-            tracing::info!("Aggregated {} BLS signatures into single signature", count);
-            SignedAttestation::new_with_aggregated(attestation.clone(), aggregated, signer_ids)
-        }
-    };
+    if reservation.created {
+        let event = AttestationEvent {
+            event_type: "attestation",
+            hash: request.hash,
+            timestamp: reservation.job.attestation.timestamp,
+        };
+        let _ = state.event_tx.send(event);
+    }
 
-    let verified_count =
-        witness_core::verify_signed_attestation(&signed, &state.config).map_err(|e| {
-            tracing::error!("Signature verification failed: {}", e);
-            AppError::InvalidSignature
-        })?;
-    tracing::info!("Verified {} signatures", verified_count);
+    let status = job_http_status(reservation.job.status);
+    Ok((status, Json(reservation.job)))
+}
 
-    state.storage.store_attestation(&signed, None).await?;
-    state.storage.confirm_attestation(&hash).await?;
-    metrics::record_attestation();
-
-    tracing::info!(
-        "Successfully timestamped hash {} with sequence {}",
-        request.hash,
-        signed.attestation.sequence
-    );
-
-    let event = AttestationEvent {
-        event_type: "attestation",
-        hash: request.hash.clone(),
-        timestamp: signed.attestation.timestamp,
-    };
-    let _ = state.event_tx.send(event);
-
-    Ok((
-        StatusCode::CREATED,
-        Json(TimestampResponse {
-            attestation: signed,
-            status: "confirmed".to_string(),
-        }),
-    ))
+fn job_http_status(status: AttestationJobStatus) -> StatusCode {
+    match status {
+        AttestationJobStatus::Pending | AttestationJobStatus::Retryable => StatusCode::ACCEPTED,
+        AttestationJobStatus::Confirmed | AttestationJobStatus::Failed => StatusCode::OK,
+    }
 }
 
 // ============================================================================
@@ -1134,66 +1049,35 @@ async fn federation_anchor_handler(
         request.batch.network_id
     );
 
-    let sequence = state.storage.get_next_sequence(&state.config.id).await?;
-    let attestation =
-        Attestation::new(request.batch.merkle_root, state.config.id.clone(), sequence);
-    tracing::debug!(
-        "Created attestation for batch cross-anchor: {}",
-        attestation
-    );
+    state
+        .storage
+        .reserve_job(&request.batch.merkle_root, &state.config.id, epoch_secs())
+        .await?;
 
-    let responses = collect_signatures_until_threshold(
-        &state.config.witnesses,
-        &attestation,
-        &state.witness_client,
-        state.config.threshold,
-    )
-    .await;
-
-    if responses.len() < state.config.threshold {
-        return Err(AppError::InsufficientSignatures {
-            got: responses.len(),
-            required: state.config.threshold,
-        });
-    }
-
-    tracing::info!(
-        "Collected {} signatures for cross-anchor (threshold: {})",
-        responses.len(),
-        state.config.threshold
-    );
-
-    let witness_attestation = match state.config.signature_scheme {
-        SignatureScheme::Ed25519 => {
-            let mut signed = SignedAttestation::new(attestation.clone());
-            for response in responses {
-                signed.add_signature(response.witness_id, response.signature);
+    // Cross-anchor callers still require a signed response, but signing now
+    // goes through the same durable verified worker as public submissions.
+    let witness_attestation = {
+        let mut confirmed = None;
+        for _ in 0..150 {
+            let job = state
+                .storage
+                .get_job(&request.batch.merkle_root)
+                .await?
+                .ok_or(AppError::InternalError)?;
+            if job.status == AttestationJobStatus::Failed {
+                return Err(AppError::InternalError);
             }
-            signed
+            if let Some(signed) = job.signed_attestation {
+                confirmed = Some(signed);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        SignatureScheme::BLS => {
-            let signer_ids: Vec<String> = responses.iter().map(|r| r.witness_id.clone()).collect();
-            let individual_signatures: Vec<Vec<u8>> =
-                responses.into_iter().map(|r| r.signature).collect();
-            let aggregated = witness_core::aggregate_signatures_bls(&individual_signatures)
-                .map_err(|e| {
-                    tracing::error!("BLS aggregation for cross-anchor failed: {}", e);
-                    AppError::InvalidSignature
-                })?;
-            SignedAttestation::new_with_aggregated(attestation.clone(), aggregated, signer_ids)
-        }
+        confirmed.ok_or(AppError::InsufficientSignatures {
+            got: 0,
+            required: state.config.threshold,
+        })?
     };
-
-    // Sanity check: re-verify the cross-anchor attestation against our own config
-    // before sending it to the peer.  Catches any aggregation/signing bugs locally
-    // instead of leaking bad cross-anchors into the federation.
-    witness_core::verify_signed_attestation(&witness_attestation, &state.config).map_err(|e| {
-        tracing::error!(
-            "Self-verification of cross-anchor attestation failed: {}",
-            e
-        );
-        AppError::InvalidSignature
-    })?;
 
     let timestamp = epoch_secs();
 

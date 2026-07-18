@@ -138,34 +138,31 @@ verify_aggregated_signature_bls(&attestation, &aggregated, &agg_pubkey);
 
 ## Testing
 
-### Timestamp a file
+### Create and poll a BLS attestation job
 
 ```bash
-witness timestamp \
-  --gateway http://localhost:9000 \
+witness --gateway http://localhost:9000 attest \
   --file myfile.txt
 ```
 
 Expected output:
 ```
-✓ Timestamp successful!
+Attestation job accepted.
 
+Status:    Pending
 Hash:      a3f5...
 Timestamp: 1234567890
 Network:   bls-network
 Sequence:  1
-
-Signatures: BLS aggregated signature from 3 witnesses
-  - witness-1
-  - witness-2
-  - witness-3
+Poll with: witness status a3f5...
 ```
 
 ### Verify signature aggregation
 
 ```bash
-# Get attestation and inspect
-witness get --gateway http://localhost:9000 --hash <hash> --output json | jq '.signatures'
+# Poll until confirmed, then inspect the aggregate
+witness --gateway http://localhost:9000 status <hash> --output json \
+  | jq '.signed_attestation.signatures'
 ```
 
 Should show:

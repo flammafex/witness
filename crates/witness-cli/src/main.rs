@@ -26,13 +26,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Timestamp a file or hash
-    Timestamp {
-        /// File path to timestamp (will compute SHA-256)
+    /// Create or retrieve the canonical attestation job for a file or hash
+    Attest {
+        /// File path to attest (will compute SHA-256)
         #[arg(short, long, conflicts_with = "hash")]
         file: Option<String>,
 
-        /// Hash to timestamp (hex encoded SHA-256)
+        /// Hash to attest (hex encoded SHA-256)
         #[arg(long, conflicts_with = "file")]
         hash: Option<String>,
 
@@ -49,8 +49,8 @@ enum Commands {
         freebird_token: Option<String>,
     },
 
-    /// Get an existing timestamp by hash
-    Get {
+    /// Get attestation job status by hash
+    Status {
         /// Hash to look up (hex encoded SHA-256)
         hash: String,
 
@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Timestamp {
+        Commands::Attest {
             file,
             hash,
             output,
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
         } => {
             timestamp::run(&cli.gateway, file, hash, &output, save, freebird_token).await?;
         }
-        Commands::Get { hash, output } => {
+        Commands::Status { hash, output } => {
             get::run(&cli.gateway, &hash, &output).await?;
         }
         Commands::Verify { file, output } => {
@@ -213,4 +213,17 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_exposes_attest_and_status_but_not_legacy_commands() {
+        assert!(Cli::try_parse_from(["witness", "attest", "--hash", &"01".repeat(32)]).is_ok());
+        assert!(Cli::try_parse_from(["witness", "status", &"01".repeat(32)]).is_ok());
+        assert!(Cli::try_parse_from(["witness", "timestamp", "--hash", &"01".repeat(32)]).is_err());
+        assert!(Cli::try_parse_from(["witness", "get", &"01".repeat(32)]).is_err());
+    }
 }

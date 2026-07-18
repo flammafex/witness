@@ -55,64 +55,46 @@ pub async fn run(
         None
     };
 
-    // Request timestamp
+    // Reserve the canonical attestation job.
     if output_format == "text" {
         if freebird_token.is_some() {
-            println!("Requesting timestamp with Freebird token...");
+            println!("Submitting attestation job with Freebird token...");
         } else {
-            println!("Requesting timestamp from gateway...");
+            println!("Submitting attestation job...");
         }
     }
 
     let client = WitnessClient::new(gateway_url);
-    let attestation = client.timestamp(&hash, freebird_token).await?;
+    let job = client.create_attestation(&hash, freebird_token).await?;
 
     // Output results
     match output_format {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&attestation)?);
+            println!("{}", serde_json::to_string_pretty(&job)?);
         }
         "text" => {
-            println!("Timestamp successful!");
+            println!("Attestation job accepted.");
             println!();
-            println!("Hash:      {}", hex::encode(attestation.attestation.hash));
+            println!("Status:    {:?}", job.status);
+            println!("Hash:      {}", hex::encode(job.attestation.hash));
             println!(
                 "Timestamp: {} ({})",
-                attestation.attestation.timestamp,
-                format_timestamp(attestation.attestation.timestamp)
+                job.attestation.timestamp,
+                format_timestamp(job.attestation.timestamp)
             );
-            println!("Network:   {}", attestation.attestation.network_id);
-            println!("Sequence:  {}", attestation.attestation.sequence);
-            println!();
-
-            // Display signature information based on type
-            if attestation.is_aggregated() {
-                println!(
-                    "Signatures: BLS aggregated signature from {} witnesses",
-                    attestation.signature_count()
-                );
-                if let witness_core::signature_scheme::AttestationSignatures::Aggregated {
-                    signers,
-                    ..
-                } = &attestation.signatures
-                {
-                    for signer in signers {
-                        println!("  - {}", signer);
-                    }
-                }
+            println!("Network:   {}", job.attestation.network_id);
+            println!("Sequence:  {}", job.attestation.sequence);
+            println!("Attempts:  {}", job.attempts);
+            if let Some(next_attempt_at) = job.next_attempt_at {
+                println!("Next try:  {}", next_attempt_at);
+            }
+            if let Some(error) = &job.last_error {
+                println!("Last error: {}", error);
+            }
+            if let Some(attestation) = &job.signed_attestation {
+                println!("Signatures: {} verified", attestation.signature_count());
             } else {
-                println!(
-                    "Signatures: {} witnesses signed",
-                    attestation.signature_count()
-                );
-                if let witness_core::signature_scheme::AttestationSignatures::MultiSig {
-                    signatures,
-                } = &attestation.signatures
-                {
-                    for sig in signatures {
-                        println!("  - {}", sig.witness_id);
-                    }
-                }
+                println!("Poll with: witness status {}", hash);
             }
         }
         _ => {
@@ -120,15 +102,15 @@ pub async fn run(
         }
     }
 
-    // Save attestation if requested
+    // Save the durable job snapshot if requested.
     if let Some(save_path) = save_path {
-        let json = serde_json::to_string_pretty(&attestation)?;
+        let json = serde_json::to_string_pretty(&job)?;
         fs::write(&save_path, json)
             .with_context(|| format!("Failed to write attestation to: {}", save_path))?;
 
         if output_format == "text" {
             println!();
-            println!("Attestation saved to: {}", save_path);
+            println!("Attestation job saved to: {}", save_path);
         }
     }
 

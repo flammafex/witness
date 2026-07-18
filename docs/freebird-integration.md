@@ -1,7 +1,7 @@
 # Freebird Integration
 
 Witness can use Freebird verifier tokens as anonymous admission control for
-`POST /v1/timestamp`.
+creation through `POST /v1/attestations`.
 
 ## Current Contract
 
@@ -34,11 +34,11 @@ export FREEBIRD_REQUIRED=true
 export FREEBIRD_CONSUME_TOKENS=true
 ```
 
-`FREEBIRD_REQUIRED=true` rejects timestamp requests that do not include a token.
+`FREEBIRD_REQUIRED=true` rejects new attestation jobs that do not include a token.
 This should be the default for public gateways.
 
 `FREEBIRD_CONSUME_TOKENS=true` uses `/v1/verify` and prevents token reuse. This
-is the recommended mode for timestamp creation.
+is the recommended mode for attestation-job creation.
 
 `FREEBIRD_CONSUME_TOKENS=false` uses `/v1/check`. This proves token possession
 without consuming the token, so it must be paired with another replay or rate
@@ -58,7 +58,7 @@ and should never be used for a public gateway.
 
 ## Client Request Shape
 
-Timestamp requests may include a Freebird token:
+Attestation creation requests may include a Freebird token:
 
 ```json
 {
@@ -72,8 +72,14 @@ Timestamp requests may include a Freebird token:
 The CLI can load the same JSON shape:
 
 ```bash
-witness timestamp --file document.pdf --freebird-token token.json
+witness attest --file document.pdf --freebird-token token.json
 ```
+
+The gateway validates the hash and checks for an existing canonical job before
+calling Freebird. Polling with `GET /v1/attestations/:hash` and retrying `POST`
+for an existing job do not consume another token. New-job admission and
+reservation are serialized per hash within one gateway process; SQLite remains
+the canonical cross-process race authority.
 
 ## Production Notes
 
@@ -105,4 +111,4 @@ When the Freebird repository is checked out next to Witness, run:
 
 The script starts a local Freebird issuer/verifier, issues a current
 `token_b64` token, starts a local Witness network with Freebird required, and
-timestamps a hash through the Witness CLI.
+creates an attestation job through the Witness CLI.
