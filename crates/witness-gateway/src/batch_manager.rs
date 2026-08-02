@@ -13,13 +13,13 @@ use crate::federation_client::FederationClient;
 use crate::metrics;
 use crate::server::collect_signatures_until_threshold;
 use crate::storage::Storage;
-use crate::witness_client::WitnessClient;
+use crate::traits::WitnessClientTrait;
 
 /// Manages periodic batch closing for federation
 pub struct BatchManager {
     config: Arc<NetworkConfig>,
     storage: Arc<Storage>,
-    witness_client: Arc<WitnessClient>,
+    witness_client: Arc<dyn WitnessClientTrait>,
     last_batch_close_time: Arc<tokio::sync::Mutex<u64>>,
     anchor_manager: Option<Arc<AnchorManager>>,
     federation_client: Option<Arc<FederationClient>>,
@@ -29,7 +29,7 @@ impl BatchManager {
     pub fn new(
         config: Arc<NetworkConfig>,
         storage: Arc<Storage>,
-        witness_client: Arc<WitnessClient>,
+        witness_client: Arc<dyn WitnessClientTrait>,
     ) -> Self {
         let now = epoch_secs();
 
@@ -263,5 +263,320 @@ impl BatchManager {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use blst::min_sig::SecretKey as BlsSecretKey;
+    use ed25519_dalek::SigningKey;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Mutex;
+    use witness_core::{
+        encode_public_key, generate_keypair, sign_attestation, Attestation, SignResponse,
+        WitnessInfo, WitnessSignature,
+    };
+
+    /// Per-witness response script for the [`MockWitnessClient`]. Mirrors the
+    /// `reconciler` tests: real signatures for the configured scheme, garbage
+    /// bytes, or a hard error.
+    #[derive(Clone)]
+    enum Action {
+        Valid(Arc<SigningKey>),
+        BlsValid(Arc<BlsSecretKey>),
+        Invalid,
+        Error,
+    }
+
+    /// Deterministic [`WitnessClientTrait`] fake. A witness with no queued
+    /// action (or an exhausted queue) fails the request, matching the
+    /// fail-closed behavior of the real client. `calls` counts every
+    /// `request_signature` invocation regardless of outcome.
+    struct MockWitnessClient {
+        actions: Mutex<HashMap<String, VecDeque<Action>>>,
+        calls: AtomicUsize,
+    }
+
+    impl MockWitnessClient {
+        fn new(actions: HashMap<String, VecDeque<Action>>) -> Self {
+            Self {
+                actions: Mutex::new(actions),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl WitnessClientTrait for MockWitnessClient {
+        async fn request_signature(
+            &self,
+            witness: &WitnessInfo,
+            attestation: &Attestation,
+        ) -> anyhow::Result<SignResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let action = self
+                .actions
+                .lock()
+                .await
+                .get_mut(&witness.id)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or(Action::Error);
+            match action {
+                Action::Valid(key) => Ok(SignResponse {
+                    witness_id: witness.id.clone(),
+                    signature: sign_attestation(attestation, &key),
+                }),
+                Action::BlsValid(key) => Ok(SignResponse {
+                    witness_id: witness.id.clone(),
+                    signature: witness_core::sign_attestation_bls(attestation, &key),
+                }),
+                Action::Invalid => Ok(SignResponse {
+                    witness_id: witness.id.clone(),
+                    signature: vec![0; 64],
+                }),
+                Action::Error => anyhow::bail!("mock witness unavailable"),
+            }
+        }
+    }
+
+    fn ed25519_config(keys: &[SigningKey], threshold: usize) -> Arc<NetworkConfig> {
+        let witnesses = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| WitnessInfo {
+                id: format!("w{}", index + 1),
+                pubkey: encode_public_key(&key.verifying_key()),
+                endpoint: format!("http://w{}.local", index + 1),
+                auth_token: Some("token".to_string()),
+            })
+            .collect();
+        Arc::new(NetworkConfig {
+            id: "network".to_string(),
+            witnesses,
+            threshold,
+            signature_scheme: SignatureScheme::Ed25519,
+            federation: Default::default(),
+            external_anchors: Default::default(),
+            federation_peers: vec![],
+        })
+    }
+
+    fn bls_config(keys: &[BlsSecretKey], threshold: usize) -> Arc<NetworkConfig> {
+        let witnesses = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| WitnessInfo {
+                id: format!("w{}", index + 1),
+                pubkey: witness_core::encode_bls_public_key(&key.sk_to_pk()),
+                endpoint: format!("http://w{}.local", index + 1),
+                auth_token: Some("token".to_string()),
+            })
+            .collect();
+        Arc::new(NetworkConfig {
+            id: "network".to_string(),
+            witnesses,
+            threshold,
+            signature_scheme: SignatureScheme::BLS,
+            federation: Default::default(),
+            external_anchors: Default::default(),
+            federation_peers: vec![],
+        })
+    }
+
+    /// Create a fresh in-memory storage, seed `leaves` as confirmed,
+    /// unbatched attestations, close them into one batch, and return the
+    /// storage plus the batch id. Uses the same fixture writer as the
+    /// storage unit tests (`store_attestation` is test-only).
+    async fn storage_with_log(config: &NetworkConfig, leaves: &[[u8; 32]]) -> (Arc<Storage>, i64) {
+        let storage = Arc::new(Storage::new("sqlite::memory:").await.unwrap());
+        storage.migrate().await.unwrap();
+
+        for (index, leaf) in leaves.iter().enumerate() {
+            let attestation = Attestation {
+                hash: *leaf,
+                timestamp: 1,
+                network_id: config.id.clone(),
+                sequence: index as u64 + 1,
+            };
+            let signed = SignedAttestation {
+                attestation,
+                signatures: AttestationSignatures::MultiSig {
+                    signatures: vec![WitnessSignature {
+                        witness_id: "w1".to_string(),
+                        signature: vec![0u8; 64],
+                    }],
+                },
+            };
+            storage
+                .store_attestation(&signed, Some("confirmed"))
+                .await
+                .unwrap();
+        }
+
+        let batch = AttestationBatch {
+            id: 0,
+            network_id: config.id.clone(),
+            merkle_root: MerkleTree::new(leaves.to_vec()).root(),
+            period_start: 1,
+            period_end: 2,
+            attestation_count: leaves.len() as u64,
+        };
+        let batch_id = storage.store_batch(&batch, leaves).await.unwrap();
+        (storage, batch_id)
+    }
+
+    #[tokio::test]
+    async fn ed25519_sth_is_signed_and_persisted_when_threshold_met() {
+        let (key1, _) = generate_keypair();
+        let (key2, _) = generate_keypair();
+        let (key3, _) = generate_keypair();
+        let config = ed25519_config(&[key1.clone(), key2.clone(), key3.clone()], 3);
+        let leaves = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let (storage, batch_id) = storage_with_log(&config, &leaves).await;
+
+        let client = Arc::new(MockWitnessClient::new(HashMap::from([
+            (
+                "w1".to_string(),
+                VecDeque::from([Action::Valid(Arc::new(key1))]),
+            ),
+            (
+                "w2".to_string(),
+                VecDeque::from([Action::Valid(Arc::new(key2))]),
+            ),
+            (
+                "w3".to_string(),
+                VecDeque::from([Action::Valid(Arc::new(key3))]),
+            ),
+        ])));
+        let bm = BatchManager::new(config.clone(), storage.clone(), client);
+
+        bm.sign_and_store_sth(batch_id, 12345).await.unwrap();
+
+        let sth = storage
+            .get_latest_sth(&config.id)
+            .await
+            .unwrap()
+            .expect("STH should be persisted");
+        assert_eq!(sth.tree_head.tree_size, leaves.len() as u64);
+        assert_eq!(sth.tree_head.root_hash, merkle_tree_hash(&leaves));
+        assert_eq!(sth.tree_head.timestamp, 12345);
+        assert!(
+            witness_core::verify_signed_attestation(&sth.signed_attestation, &config).is_ok(),
+            "persisted Ed25519 STH must pass the client-facing verifier"
+        );
+    }
+
+    #[tokio::test]
+    async fn bls_sth_is_signed_and_persisted_when_threshold_met() {
+        let (key1, _) = witness_core::generate_bls_keypair();
+        let (key2, _) = witness_core::generate_bls_keypair();
+        let (key3, _) = witness_core::generate_bls_keypair();
+        let config = bls_config(&[key1.clone(), key2.clone(), key3.clone()], 3);
+        let leaves = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let (storage, batch_id) = storage_with_log(&config, &leaves).await;
+
+        let client = Arc::new(MockWitnessClient::new(HashMap::from([
+            (
+                "w1".to_string(),
+                VecDeque::from([Action::BlsValid(Arc::new(key1))]),
+            ),
+            (
+                "w2".to_string(),
+                VecDeque::from([Action::BlsValid(Arc::new(key2))]),
+            ),
+            (
+                "w3".to_string(),
+                VecDeque::from([Action::BlsValid(Arc::new(key3))]),
+            ),
+        ])));
+        let bm = BatchManager::new(config.clone(), storage.clone(), client);
+
+        bm.sign_and_store_sth(batch_id, 12345).await.unwrap();
+
+        let sth = storage
+            .get_latest_sth(&config.id)
+            .await
+            .unwrap()
+            .expect("STH should be persisted");
+        assert!(sth.signed_attestation.is_aggregated());
+        assert_eq!(sth.tree_head.tree_size, leaves.len() as u64);
+        assert_eq!(sth.tree_head.root_hash, merkle_tree_hash(&leaves));
+        assert_eq!(sth.tree_head.timestamp, 12345);
+        assert!(
+            witness_core::verify_signed_attestation(&sth.signed_attestation, &config).is_ok(),
+            "persisted BLS STH must pass the client-facing verifier"
+        );
+    }
+
+    #[tokio::test]
+    async fn sth_signing_fails_and_persists_nothing_when_threshold_not_met() {
+        let (key1, _) = generate_keypair();
+        let (key2, _) = generate_keypair();
+        let (key3, _) = generate_keypair();
+        let config = ed25519_config(&[key1.clone(), key2.clone(), key3.clone()], 3);
+        let leaves = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let (storage, batch_id) = storage_with_log(&config, &leaves).await;
+
+        // Only one of three witnesses returns a valid signature.
+        let client = Arc::new(MockWitnessClient::new(HashMap::from([
+            (
+                "w1".to_string(),
+                VecDeque::from([Action::Valid(Arc::new(key1))]),
+            ),
+            ("w2".to_string(), VecDeque::from([Action::Error])),
+            ("w3".to_string(), VecDeque::from([Action::Error])),
+        ])));
+        let bm = BatchManager::new(config.clone(), storage.clone(), client);
+
+        assert!(bm.sign_and_store_sth(batch_id, 12345).await.is_err());
+        assert!(
+            storage.get_latest_sth(&config.id).await.unwrap().is_none(),
+            "no STH may be persisted below threshold"
+        );
+    }
+
+    #[tokio::test]
+    async fn sth_signing_rejects_garbage_signatures_and_persists_nothing() {
+        let (key1, _) = generate_keypair();
+        let (key2, _) = generate_keypair();
+        let (key3, _) = generate_keypair();
+        let config = ed25519_config(&[key1.clone(), key2.clone(), key3.clone()], 3);
+        let leaves = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let (storage, batch_id) = storage_with_log(&config, &leaves).await;
+
+        // All witnesses "succeed" but return non-signature garbage; the
+        // defense-in-depth verification in sign_and_store_sth must reject it.
+        let client = Arc::new(MockWitnessClient::new(HashMap::from([
+            ("w1".to_string(), VecDeque::from([Action::Invalid])),
+            ("w2".to_string(), VecDeque::from([Action::Invalid])),
+            ("w3".to_string(), VecDeque::from([Action::Invalid])),
+        ])));
+        let bm = BatchManager::new(config.clone(), storage.clone(), client);
+
+        assert!(bm.sign_and_store_sth(batch_id, 12345).await.is_err());
+        assert!(
+            storage.get_latest_sth(&config.id).await.unwrap().is_none(),
+            "no STH may be persisted with unverifiable signatures"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_log_short_circuits_without_calling_witnesses() {
+        let (key1, _) = generate_keypair();
+        let config = ed25519_config(&[key1], 1);
+        let storage = Arc::new(Storage::new("sqlite::memory:").await.unwrap());
+        storage.migrate().await.unwrap();
+
+        let client = Arc::new(MockWitnessClient::new(HashMap::new()));
+        let bm = BatchManager::new(config.clone(), storage.clone(), client.clone());
+
+        // No batch/leaves exist; the empty-log shortcut must return Ok without
+        // ever reaching a witness.
+        bm.sign_and_store_sth(1, 12345).await.unwrap();
+        assert_eq!(client.calls.load(Ordering::SeqCst), 0);
+        assert!(storage.get_latest_sth(&config.id).await.unwrap().is_none());
     }
 }

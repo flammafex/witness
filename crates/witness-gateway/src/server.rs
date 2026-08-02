@@ -39,7 +39,7 @@ use crate::freebird::FreebirdClient;
 use crate::metrics::{self, RequestTimer};
 use crate::real_ip::real_ip;
 use crate::storage::Storage;
-use crate::witness_client::WitnessClient;
+use crate::traits::WitnessClientTrait;
 
 // ============================================================================
 // Public types
@@ -514,7 +514,7 @@ fn admin_unauthorized_response() -> Response {
 pub(crate) async fn collect_signatures_until_threshold(
     witnesses: &[WitnessInfo],
     attestation: &Attestation,
-    client: &Arc<WitnessClient>,
+    client: &Arc<dyn WitnessClientTrait>,
     threshold: usize,
 ) -> Vec<SignResponse> {
     let mut set = tokio::task::JoinSet::new();

@@ -186,3 +186,313 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .ok()?;
     value.strip_prefix("Bearer ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::header::AUTHORIZATION;
+    use std::net::SocketAddr;
+    use witness_core::{Attestation, NetworkConfig, SignedAttestation, WitnessInfo};
+
+    const NETWORK_ID: &str = "test-net";
+    const CURRENT_TOKEN: &str = "current-token";
+    const PREVIOUS_TOKEN: &str = "previous-token";
+
+    fn test_config(signature_scheme: SignatureScheme, private_key: String) -> WitnessNodeConfig {
+        WitnessNodeConfig {
+            id: "witness-1".to_string(),
+            signature_scheme,
+            private_key,
+            port: 3000,
+            host: "127.0.0.1".to_string(),
+            network_id: NETWORK_ID.to_string(),
+            signing_auth_token: CURRENT_TOKEN.to_string(),
+            previous_signing_auth_token: Some(PREVIOUS_TOKEN.to_string()),
+            max_clock_skew: 300,
+        }
+    }
+
+    fn ed25519_config() -> WitnessNodeConfig {
+        let (signing_key, _) = witness_core::generate_keypair();
+        test_config(
+            SignatureScheme::Ed25519,
+            hex::encode(signing_key.to_bytes()),
+        )
+    }
+
+    fn bls_config() -> WitnessNodeConfig {
+        let (secret_key, _) = witness_core::generate_bls_keypair();
+        test_config(
+            SignatureScheme::BLS,
+            witness_core::encode_bls_secret_key(&secret_key),
+        )
+    }
+
+    fn now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn sign_request(network_id: &str, timestamp: u64) -> SignRequest {
+        SignRequest {
+            attestation: Attestation {
+                hash: [7u8; 32],
+                timestamp,
+                network_id: network_id.to_string(),
+                sequence: 1,
+            },
+        }
+    }
+
+    fn auth_headers(token: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(token) = token {
+            headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        }
+        headers
+    }
+
+    /// Call `sign_handler` directly (no Router) and unwrap the success body
+    /// back into a concrete `SignResponse`.
+    async fn sign_success(
+        server: &WitnessServer,
+        addr: SocketAddr,
+        headers: HeaderMap,
+        request: SignRequest,
+    ) -> SignResponse {
+        let result = sign_handler(
+            State(server.clone()),
+            ConnectInfo(addr),
+            headers,
+            Json(request),
+        )
+        .await;
+
+        match result {
+            Ok(response) => {
+                let body = axum::body::to_bytes(response.into_response().into_body(), 1 << 20)
+                    .await
+                    .expect("failed to read sign response body");
+                serde_json::from_slice(&body).expect("failed to parse SignResponse")
+            }
+            Err(_) => panic!("expected sign_handler to succeed"),
+        }
+    }
+
+    /// Call `sign_handler` directly and return the exact `AppError` it produced.
+    async fn expect_error(
+        server: &WitnessServer,
+        addr: SocketAddr,
+        headers: HeaderMap,
+        request: SignRequest,
+    ) -> AppError {
+        let result = sign_handler(
+            State(server.clone()),
+            ConnectInfo(addr),
+            headers,
+            Json(request),
+        )
+        .await;
+
+        match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected sign_handler to fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_bearer_token_rejected() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4001".parse().unwrap();
+
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(None),
+            sign_request(NETWORK_ID, now()),
+        )
+        .await;
+        assert!(matches!(err, AppError::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn wrong_bearer_token_rejected() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4002".parse().unwrap();
+
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(Some("wrong-token")),
+            sign_request(NETWORK_ID, now()),
+        )
+        .await;
+        assert!(matches!(err, AppError::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn current_token_signs_attestation() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4003".parse().unwrap();
+        let request = sign_request(NETWORK_ID, now());
+
+        let response = sign_success(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            request.clone(),
+        )
+        .await;
+
+        assert_eq!(response.witness_id, server.config.id);
+        let verifying_key = server.config.ed25519_verifying_key().unwrap();
+        witness_core::verify_signature(&request.attestation, &response.signature, &verifying_key)
+            .expect("signature should verify against the config's public key");
+    }
+
+    #[tokio::test]
+    async fn previous_token_grace_path_signs() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4004".parse().unwrap();
+        let request = sign_request(NETWORK_ID, now());
+
+        // Only the previous token matches; this is the rotation grace path.
+        let response = sign_success(
+            &server,
+            addr,
+            auth_headers(Some(PREVIOUS_TOKEN)),
+            request.clone(),
+        )
+        .await;
+
+        assert_eq!(response.witness_id, server.config.id);
+        let verifying_key = server.config.ed25519_verifying_key().unwrap();
+        witness_core::verify_signature(&request.attestation, &response.signature, &verifying_key)
+            .expect("signature should verify against the config's public key");
+    }
+
+    #[tokio::test]
+    async fn unmatched_token_rejected() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4005".parse().unwrap();
+
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(Some("neither-current-nor-previous")),
+            sign_request(NETWORK_ID, now()),
+        )
+        .await;
+        assert!(matches!(err, AppError::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn timestamp_outside_skew_rejected() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4006".parse().unwrap();
+
+        let future = now() + server.config.max_clock_skew + 60;
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            sign_request(NETWORK_ID, future),
+        )
+        .await;
+        assert!(matches!(err, AppError::InvalidTimestamp));
+    }
+
+    #[tokio::test]
+    async fn wrong_network_id_rejected() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4007".parse().unwrap();
+
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            sign_request("wrong-net", now()),
+        )
+        .await;
+        assert!(matches!(err, AppError::InvalidNetwork));
+    }
+
+    #[tokio::test]
+    async fn ed25519_signature_verifies_via_signed_attestation() {
+        let server = WitnessServer::new(ed25519_config());
+        let addr: SocketAddr = "127.0.0.1:4008".parse().unwrap();
+        let request = sign_request(NETWORK_ID, now());
+
+        let response = sign_success(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            request.clone(),
+        )
+        .await;
+
+        // Build a NetworkConfig carrying this witness and verify through the
+        // full SignedAttestation (multi-sig threshold) path.
+        let network = NetworkConfig {
+            id: NETWORK_ID.to_string(),
+            witnesses: vec![WitnessInfo {
+                id: server.config.id.clone(),
+                pubkey: server.config.public_key(),
+                endpoint: "http://127.0.0.1:3000".to_string(),
+                auth_token: None,
+            }],
+            threshold: 1,
+            signature_scheme: SignatureScheme::Ed25519,
+            federation: Default::default(),
+            external_anchors: Default::default(),
+            federation_peers: vec![],
+        };
+
+        let mut signed = SignedAttestation::new(request.attestation);
+        signed.add_signature(response.witness_id, response.signature);
+        let verified = witness_core::verify_signed_attestation(&signed, &network).unwrap();
+        assert_eq!(verified, 1);
+    }
+
+    #[tokio::test]
+    async fn bls_configuration_signs_and_verifies() {
+        let server = WitnessServer::new(bls_config());
+        let addr: SocketAddr = "127.0.0.1:4009".parse().unwrap();
+        let request = sign_request(NETWORK_ID, now());
+
+        let response = sign_success(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            request.clone(),
+        )
+        .await;
+
+        assert_eq!(response.witness_id, server.config.id);
+        let public_key = server.config.bls_public_key().unwrap();
+        witness_core::verify_signature_bls(&request.attestation, &response.signature, &public_key)
+            .expect("BLS signature should verify against the config's public key");
+    }
+
+    #[tokio::test]
+    async fn corrupt_ed25519_key_returns_internal_error() {
+        // "deadbeef" is valid hex but only 4 bytes — too short to be an
+        // Ed25519 seed, so key derivation fails inside the sign handler.
+        let server = WitnessServer::new(test_config(
+            SignatureScheme::Ed25519,
+            "deadbeef".to_string(),
+        ));
+        let addr: SocketAddr = "127.0.0.1:4010".parse().unwrap();
+
+        let err = expect_error(
+            &server,
+            addr,
+            auth_headers(Some(CURRENT_TOKEN)),
+            sign_request(NETWORK_ID, now()),
+        )
+        .await;
+        assert!(matches!(err, AppError::InternalError));
+    }
+}
