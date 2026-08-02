@@ -26,18 +26,27 @@ echo
 
 # Timestamp the file
 echo "2. Timestamping file..."
-cargo run -p witness-cli -- timestamp --file /tmp/test-file.txt --save /tmp/attestation.json
-echo
-
-# Retrieve the timestamp
-echo "3. Looking up timestamp by hash..."
 HASH=$(sha256sum /tmp/test-file.txt | awk '{print $1}')
-cargo run -p witness-cli -- get "$HASH"
+cargo run -p witness-cli -- attest --file /tmp/test-file.txt
 echo
 
-# Verify the attestation
-echo "4. Verifying attestation..."
-cargo run -p witness-cli -- verify /tmp/attestation.json
+# Wait for the attestation job to be confirmed
+echo "3. Waiting for attestation to be confirmed..."
+for i in $(seq 1 30); do
+    STATUS=$(cargo run -q -p witness-cli -- status "$HASH" 2>/dev/null | grep "Status:" | awk '{print $2}')
+    if [ "$STATUS" = "Confirmed" ]; then
+        echo "✓ Confirmed after ${i}s"
+        break
+    fi
+    sleep 1
+done
+echo
+
+# Save the signed attestation and verify it
+echo "4. Saving and verifying attestation..."
+cargo run -q -p witness-cli -- attest --hash "$HASH" --save /tmp/attestation.json >/dev/null
+jq -r '.signed_attestation' /tmp/attestation.json > /tmp/attestation-signed.json
+cargo run -p witness-cli -- verify /tmp/attestation-signed.json
 echo
 
 # Show network config
@@ -55,4 +64,4 @@ echo "existed at the recorded timestamp."
 echo
 echo "Try modifying the file and timestamping again:"
 echo "  echo 'Modified!' > /tmp/test-file.txt"
-echo "  cargo run -p witness-cli -- timestamp --file /tmp/test-file.txt"
+echo "  cargo run -p witness-cli -- attest --file /tmp/test-file.txt"

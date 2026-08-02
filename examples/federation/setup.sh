@@ -66,19 +66,19 @@ cat > "examples/federation/network-a.json" <<EOF
     {
       "id": "witness-a-1",
       "pubkey": "$NET_A_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W1_PORT",
+      "endpoint": "http://127.0.0.1:$NET_A_W1_PORT",
       "auth_token": "$NET_A_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-a-2",
       "pubkey": "$NET_A_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W2_PORT",
+      "endpoint": "http://127.0.0.1:$NET_A_W2_PORT",
       "auth_token": "$NET_A_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-a-3",
       "pubkey": "$NET_A_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_A_W3_PORT",
+      "endpoint": "http://127.0.0.1:$NET_A_W3_PORT",
       "auth_token": "$NET_A_W3_AUTH_TOKEN"
     }
   ],
@@ -88,12 +88,12 @@ cat > "examples/federation/network-a.json" <<EOF
     "peer_networks": [
       {
         "id": "network-b",
-        "gateway": "http://localhost:9002",
+        "gateway": "http://127.0.0.1:9002",
         "min_witnesses": 2
       },
       {
         "id": "network-c",
-        "gateway": "http://localhost:9003",
+        "gateway": "http://127.0.0.1:9003",
         "min_witnesses": 2
       }
     ],
@@ -111,19 +111,19 @@ cat > "examples/federation/network-b.json" <<EOF
     {
       "id": "witness-b-1",
       "pubkey": "$NET_B_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W1_PORT",
+      "endpoint": "http://127.0.0.1:$NET_B_W1_PORT",
       "auth_token": "$NET_B_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-b-2",
       "pubkey": "$NET_B_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W2_PORT",
+      "endpoint": "http://127.0.0.1:$NET_B_W2_PORT",
       "auth_token": "$NET_B_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-b-3",
       "pubkey": "$NET_B_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_B_W3_PORT",
+      "endpoint": "http://127.0.0.1:$NET_B_W3_PORT",
       "auth_token": "$NET_B_W3_AUTH_TOKEN"
     }
   ],
@@ -133,12 +133,12 @@ cat > "examples/federation/network-b.json" <<EOF
     "peer_networks": [
       {
         "id": "network-a",
-        "gateway": "http://localhost:9001",
+        "gateway": "http://127.0.0.1:9001",
         "min_witnesses": 2
       },
       {
         "id": "network-c",
-        "gateway": "http://localhost:9003",
+        "gateway": "http://127.0.0.1:9003",
         "min_witnesses": 2
       }
     ],
@@ -156,19 +156,19 @@ cat > "examples/federation/network-c.json" <<EOF
     {
       "id": "witness-c-1",
       "pubkey": "$NET_C_W1_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W1_PORT",
+      "endpoint": "http://127.0.0.1:$NET_C_W1_PORT",
       "auth_token": "$NET_C_W1_AUTH_TOKEN"
     },
     {
       "id": "witness-c-2",
       "pubkey": "$NET_C_W2_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W2_PORT",
+      "endpoint": "http://127.0.0.1:$NET_C_W2_PORT",
       "auth_token": "$NET_C_W2_AUTH_TOKEN"
     },
     {
       "id": "witness-c-3",
       "pubkey": "$NET_C_W3_PUBKEY",
-      "endpoint": "http://localhost:$NET_C_W3_PORT",
+      "endpoint": "http://127.0.0.1:$NET_C_W3_PORT",
       "auth_token": "$NET_C_W3_AUTH_TOKEN"
     }
   ],
@@ -178,12 +178,12 @@ cat > "examples/federation/network-c.json" <<EOF
     "peer_networks": [
       {
         "id": "network-a",
-        "gateway": "http://localhost:9001",
+        "gateway": "http://127.0.0.1:9001",
         "min_witnesses": 2
       },
       {
         "id": "network-b",
-        "gateway": "http://localhost:9002",
+        "gateway": "http://127.0.0.1:9002",
         "min_witnesses": 2
       }
     ],

@@ -60,19 +60,19 @@ cat > "examples/network.json" <<EOF
     {
       "id": "witness-1",
       "pubkey": "$WITNESS1_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS1_PORT",
+      "endpoint": "http://127.0.0.1:$WITNESS1_PORT",
       "auth_token": "$WITNESS1_AUTH_TOKEN"
     },
     {
       "id": "witness-2",
       "pubkey": "$WITNESS2_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS2_PORT",
+      "endpoint": "http://127.0.0.1:$WITNESS2_PORT",
       "auth_token": "$WITNESS2_AUTH_TOKEN"
     },
     {
       "id": "witness-3",
       "pubkey": "$WITNESS3_PUBKEY",
-      "endpoint": "http://localhost:$WITNESS3_PORT",
+      "endpoint": "http://127.0.0.1:$WITNESS3_PORT",
       "auth_token": "$WITNESS3_AUTH_TOKEN"
     }
   ],

@@ -97,19 +97,19 @@ cat > "examples/gateway1/network.json" <<EOF
     {
       "id": "gateway1-witness-1",
       "pubkey": "$G1_W1_PUBKEY",
-      "endpoint": "http://localhost:$G1_W1_PORT",
+      "endpoint": "http://127.0.0.1:$G1_W1_PORT",
       "auth_token": "$G1_W1_AUTH_TOKEN"
     },
     {
       "id": "gateway1-witness-2",
       "pubkey": "$G1_W2_PUBKEY",
-      "endpoint": "http://localhost:$G1_W2_PORT",
+      "endpoint": "http://127.0.0.1:$G1_W2_PORT",
       "auth_token": "$G1_W2_AUTH_TOKEN"
     },
     {
       "id": "gateway1-witness-3",
       "pubkey": "$G1_W3_PUBKEY",
-      "endpoint": "http://localhost:$G1_W3_PORT",
+      "endpoint": "http://127.0.0.1:$G1_W3_PORT",
       "auth_token": "$G1_W3_AUTH_TOKEN"
     }
   ],
@@ -126,19 +126,19 @@ cat > "examples/gateway2/network.json" <<EOF
     {
       "id": "gateway2-witness-1",
       "pubkey": "$G2_W1_PUBKEY",
-      "endpoint": "http://localhost:$G2_W1_PORT",
+      "endpoint": "http://127.0.0.1:$G2_W1_PORT",
       "auth_token": "$G2_W1_AUTH_TOKEN"
     },
     {
       "id": "gateway2-witness-2",
       "pubkey": "$G2_W2_PUBKEY",
-      "endpoint": "http://localhost:$G2_W2_PORT",
+      "endpoint": "http://127.0.0.1:$G2_W2_PORT",
       "auth_token": "$G2_W2_AUTH_TOKEN"
     },
     {
       "id": "gateway2-witness-3",
       "pubkey": "$G2_W3_PUBKEY",
-      "endpoint": "http://localhost:$G2_W3_PORT",
+      "endpoint": "http://127.0.0.1:$G2_W3_PORT",
       "auth_token": "$G2_W3_AUTH_TOKEN"
     }
   ],

@@ -89,19 +89,19 @@ cat > "$BLS_DIR/network.json" <<EOF
     {
       "id": "witness-1",
       "pubkey": "$PUBKEY1",
-      "endpoint": "http://localhost:8001",
+      "endpoint": "http://127.0.0.1:8001",
       "auth_token": "$AUTH_TOKEN1"
     },
     {
       "id": "witness-2",
       "pubkey": "$PUBKEY2",
-      "endpoint": "http://localhost:8002",
+      "endpoint": "http://127.0.0.1:8002",
       "auth_token": "$AUTH_TOKEN2"
     },
     {
       "id": "witness-3",
       "pubkey": "$PUBKEY3",
-      "endpoint": "http://localhost:8003",
+      "endpoint": "http://127.0.0.1:8003",
       "auth_token": "$AUTH_TOKEN3"
     }
   ]
