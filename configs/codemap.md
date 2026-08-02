@@ -11,12 +11,12 @@ Deployment and operational configuration for a production Witness deployment. Th
 A single templated nginx server block (see `configs/server/codemap.md` for the full route/allowlist inventory). Placeholders `{{SERVER_NAME}}`, `{{ADMIN_IP}}`, `{{INTERNAL_CIDR}}`, `{{CLIENT_IP}}`, `{{PEER_GATEWAY_1}}`, `{{PEER_GATEWAY_2}}` are substituted at deploy time. Upstreams are all localhost: `gateway_backend` (`127.0.0.1:8080`) plus three named witnesses `witness_a1`/`witness_b3`/`witness_c2` (`127.0.0.1:3001/3002/3003`).
 
 The allowlist model is *route-by-route* (not one blanket rule), split into tiers:
-- **Public read-only**: `/health`, `/v1/config`, `GET /v1/timestamp/{hash}`, `/v1/verify`, `/v1/anchors/{hash}`, `/v1/proof/{hash}`, witness `/health` and `/v1/info` (needed for public key discovery).
+- **Public read-only**: `/health`, `/v1/config`, `/v1/verify`, `/v1/anchors/{hash}`, `/v1/proof/{hash}`, witness `/health` and `/v1/info` (needed for public key discovery).
 - **Admin-only**: `/metrics` (`{{ADMIN_IP}}`); `/admin` (`{{ADMIN_IP}}` + `{{INTERNAL_CIDR}}`); catch-all `/` (`{{ADMIN_IP}}`).
-- **Trusted clients**: `POST /v1/timestamp`, `/ws/events`, and the `/v1/` prefix catch-all (`{{ADMIN_IP}}` + `{{CLIENT_IP}}`).
+- **Trusted clients**: `POST /v1/attestations`, `/ws/events`, and the `/v1/` prefix catch-all (`{{ADMIN_IP}}` + `{{CLIENT_IP}}`).
 - **Gateway peers only**: `/v1/federation/anchor` and each witness `/v1/sign` (`127.0.0.1` + the two `{{PEER_GATEWAY_*}}` IPs).
 
-**CorsLayer::permissive() context:** the gateway's axum router applies `tower_http::cors::CorsLayer::permissive()` (`crates/witness-gateway/src/server.rs` lines 383, 1287, 1316), so any origin can issue browser requests at the HTTP layer. This is called out in AGENTS.md as a flagged item ("confirm intent before tightening"). The nginx allowlists are the compensating network-level control that keeps permissive CORS from being a hole — tightening CORS *and* the nginx allowlists together is the defense-in-depth posture.
+**CorsLayer::permissive() context:** the gateway's axum router applies `tower_http::cors::CorsLayer::permissive()` (`crates/witness-gateway/src/server/mod.rs` lines 264, 502, 531), so any origin can issue browser requests at the HTTP layer. This is called out in AGENTS.md as a flagged item ("confirm intent before tightening"). The nginx allowlists are the compensating network-level control that keeps permissive CORS from being a hole — tightening CORS *and* the nginx allowlists together is the defense-in-depth posture.
 
 **Operational caveat:** the `network.json` config that nginx frontends carries witness `auth_token`s in plaintext; nginx's IP restrictions for `/v1/sign` and `/v1/federation/anchor` are what protect those routes at the edge (plus the bearer-token checks in the binaries).
 
@@ -34,13 +34,13 @@ The allowlist model is *route-by-route* (not one blanket rule), split into tiers
 
 1. Operator deploys `configs/server/nginx.conf` with placeholders substituted (TLS certs from Let's Encrypt paths), or brings up the container stack via `docker compose` (ephemeral `setup` → witnesses → gateway).
 2. Client TLS terminates at nginx. Requests are matched to a route's `allow`/`deny` list; if the source IP passes, the request is reverse-proxied to `gateway_backend` (public API) or the named witness upstream.
-3. `/v1/timestamp` (create) and `/ws/events` pass only for allowlisted clients; `/v1/sign` (gateway→witness threshold signing) and `/v1/federation/anchor` (gateway↔gateway cross-anchoring) pass only from peer IPs. Bearer-token checks in the binaries remain the second layer.
+3. `POST /v1/attestations` and `/ws/events` pass only for allowlisted clients; `/v1/sign` (gateway→witness threshold signing) and `/v1/federation/anchor` (gateway↔gateway cross-anchoring) pass only from peer IPs. Bearer-token checks in the binaries remain the second layer.
 4. In the Docker path, the entrypoint fixes volume permissions, drops to the non-root `witness` user, and the gateway persists attestations to the SQLite volume.
 
 ## Integration
 
-- `configs/server/nginx.conf` → reverse-proxies `crates/witness-gateway` (ports 8080 + API routes) and `crates/witness-node` (ports 3001–3003, sign/info routes). Route paths must stay in sync with `crates/witness-gateway/src/server.rs` handlers.
-- `configs/server/nginx.conf` routes mirror the gateway API surface documented for clients (config/timestamp/verify/anchors/proof) and must match the allowlist model enforced at the edge.
+- `configs/server/nginx.conf` → reverse-proxies `crates/witness-gateway` (ports 8080 + API routes) and `crates/witness-node` (ports 3001–3003, sign/info routes). Route paths must stay in sync with `crates/witness-gateway/src/server/routes.rs` handlers.
+- `configs/server/nginx.conf` routes mirror the gateway API surface documented for clients (config/attestations/verify/anchors/proof) and must match the allowlist model enforced at the edge.
 - `Dockerfile` + `docker-compose*.yaml` → build/run the same `witness-node` and `witness-gateway` binaries; compose `setup` mirrors what `examples/setup.sh` does on bare metal.
 - Workspace release profile (`Cargo.toml [profile.release]`) is referenced by `Dockerfile` builds (which deliberately override LTO/codegen-units).
 - Nginx `/ws/events` route pairs with the live landing page ticker (`landing/index.html`), which connects to `wss://gateway.metacan.org/ws/events`.

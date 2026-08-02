@@ -22,7 +22,7 @@ persisted as a confirmed result.
   is a thin CLI wrapper (`clap`) that reads `network.json`, validates it (witness
   `auth_token`s mandatory at startup), initializes storage + migrations, and
   wires the background tasks before handing control to `server::GatewayServer`.
-- **Route-grouped Axum state**: `server.rs` deliberately uses *focused* state
+- **Route-grouped Axum state**: `server/mod.rs` deliberately uses *focused* state
   structs (`AttestationState`, `FederationState`, `MetricsState`, `CoreState`,
   `AdminAuthState`) instead of one blob, so rate limits and admission controls
   are scoped per route family. `CorsLayer::permissive()` is applied router-wide

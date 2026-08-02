@@ -36,10 +36,24 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 - **Responsibility**: Declare the 16 public modules. No logic.
 - **Consumers**: `main.rs` imports everything from here.
 
-### server.rs — all HTTP routes + handlers (~1390 lines, largest file)
+### server/ — HTTP layer (module directory, split from the former ~1390-line server.rs)
 - **Responsibility**: The Axum router and every handler: public config/verify/
   proof/bundle/RFC 9162 endpoints, attestation submission, federation anchor
-  inbound, metrics, WebSocket events, admin middleware.
+  inbound, metrics, WebSocket events, admin middleware. Cosmetically split
+  (Phase 4) into:
+  - `server/mod.rs` (554 lines): imports, `NetworkConfigPublic`, `AttestationEvent`,
+    the focused states (`CoreState`, `AttestationState`, `FederationState`,
+    `MetricsState`, `AdminAuthState`), `GatewayServer` + router (line 214),
+    admin middleware, `collect_signatures_until_threshold`, body_limit/cors tests.
+  - `server/routes.rs` (601 lines): all 20 handlers — root/health/config/network,
+    `decode_hash`, `build_merkle_inclusion_proof`, get_attestation/verify/
+    get_anchors/get_proof/get_proof_bundle, RFC 9162 (`get_latest_sth`,
+    `get_sth_at_size`, `get_consistency`, `get_log_proof`), `create_attestation`,
+    `federation_anchor`, `metrics`, plus `ProofResponse`/`ConsistencyQuery`/
+    `LogProofQuery`/`LogInclusionProofResponse`.
+  - `server/ws.rs` (113 lines): `ws_events_handler`, `handle_ws_connection`.
+  - `server/federation_auth.rs` (192 lines): `FederationAuthStore`, `TokenEntry`,
+    `generate_random_token`, and their tests.
 - **Key types**: `GatewayServer` (orchestrator), focused states (`CoreState`,
   `AttestationState`, `FederationState`, `MetricsState`, `AdminAuthState`),
   `FederationAuthStore` (in-memory per-partner token rotation + expiry),
@@ -66,7 +80,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 - **Key items**: `AdminState` (config + storage + start_time); `admin_router`
   (`/`, `/api/stats`, `/api/witnesses`, `/api/recent`, `/api/anchors`);
   `generate_dashboard_html` (self-contained HTML/JS, polling fetch).
-- **Consumers**: server.rs nests `admin_router` behind `admin_auth_middleware`
+- **Consumers**: server/mod.rs nests `admin_router` behind `admin_auth_middleware`
   when `--admin-ui` is set.
 - **Security**: never configured without an API key (main.rs aborts); middleware
   checks `x-admin-key` / Bearer / Basic against the key via `constant_time_eq`,
@@ -87,7 +101,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   `get_unbatched_attestations`/`store_batch` (transactional batch + merkle-index
   linking), `store_cross_anchor`, `store_sth`/`get_sth`/`get_latest_sth`,
   `get_log_leaves`/`get_log_index`, `store_anchor_proof`, admin counters.
-- **Consumers**: every other module — server.rs, batch_manager.rs,
+- **Consumers**: every other module — server/, batch_manager.rs,
   anchor_manager.rs, federation_client.rs, reconciler.rs, admin.rs.
 - **Notes**: `migrate_bls_legacy_rows` is a runtime data migration; `u64↔i64`
   range checks reject out-of-range values; `sanitize_job_error` strips control
@@ -148,7 +162,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   with the witness's `auth_token`, returns `SignResponse`), `health_check`
   (GET /health, 5s timeout).
 - **Consumers**: reconciler.rs (via `WitnessClientTrait`), batch_manager.rs
-  (STH signing via `WitnessClientTrait`), server.rs
+  (STH signing via `WitnessClientTrait`), server/mod.rs
   (`collect_signatures_until_threshold`), main.rs (health poller).
 
 ### reconciler.rs — leased attestation worker + reconciler loop
@@ -178,7 +192,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   `FREEBIRD_REQUIRED`, `FREEBIRD_CONSUME_TOKENS`, `FREEBIRD_ALLOW_INSECURE_LOCAL`),
   `FreebirdError`; `verify` posts `{ "token_b64": "..." }` to `/v1/verify`
   (consuming, default) or `/v1/check` (non-consuming).
-- **Consumers**: server.rs `create_attestation_handler`.
+- **Consumers**: server/routes.rs `create_attestation_handler`.
 - **Security**: URL validated via `validate_local_dev_url` (plaintext loopback
   only, dev) or `validate_outbound_url` (SSRF filter); required vs permissive
   mode determines 401 behavior; non-consuming mode warns about token reuse.
@@ -209,7 +223,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   `record_signatures`, `record_batch`, `record_anchor`, `set_attestations_24h`,
   `set_witness_health`, `set_uptime`, `RequestTimer` (per-endpoint duration
   histogram).
-- **Consumers**: main.rs (init + uptime/health pollers), server.rs (timer),
+- **Consumers**: main.rs (init + uptime/health pollers), server/mod.rs (timer),
   reconciler.rs, batch_manager.rs, anchor_manager.rs, admin.rs.
 
 ### real_ip.rs — trusted client IP extraction
@@ -217,7 +231,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 - **Key items**: `real_ip(headers, socket_addr, behind_proxy)` — when
   `behind_proxy`, uses the leftmost `X-Forwarded-For` entry (set by a trusted
   reverse proxy); otherwise the TCP socket address.
-- **Consumers**: server.rs (attestation, federation, admin middleware),
+- **Consumers**: server/ (attestation, federation, admin middleware),
   main.rs (via `--behind-proxy`).
 - **Security**: never trust the header in direct-connect mode, or any client can
   spoof its IP to bypass rate limits.
@@ -238,17 +252,17 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 - **Key items**: variants (InvalidHash, NotFound, NotBatched, InvalidSignature,
   InsufficientSignatures, Unauthorized, RateLimited, DatabaseError, Freebird*),
   `From` impls for `sqlx::Error`, `anyhow::Error`, `FreebirdError`.
-- **Consumers**: every handler in server.rs returns `Result<_, AppError>`.
+- **Consumers**: every handler in server/routes.rs returns `Result<_, AppError>`.
 
 ### epoch.rs — wall-clock helper
 - **Responsibility**: `epoch_secs()` — current UNIX time in seconds (used for
   attestation timestamps, leases, expiry, retry scheduling).
-- **Consumers**: storage.rs, batch_manager.rs, server.rs, anchor_providers.rs,
+- **Consumers**: storage.rs, batch_manager.rs, server/, anchor_providers.rs,
   reconciler.rs, admin.rs, anchor_manager.rs (indirectly).
 
 ## Flow (request lifecycle + background workers)
 
-**Public timestamp request** → `server.rs::create_attestation_handler`
+**Public timestamp request** → `server/routes.rs::create_attestation_handler`
 (admission: dedupe, per-hash lock, rate limit, Freebird) →
 `storage.reserve_job` (canonical pending tuple) → broadcast `AttestationEvent`
 → **Reconciler loop** (`reconciler.rs`) `claim_job` → `collect_verified_result`
@@ -279,7 +293,7 @@ inclusion for offline verification by clients and the auditor.
   (both Bearer-authenticated).
 - **External**: Internet Archive / Trillian / DNS API / Ethereum RPC (SSRF-safe);
   Freebird verifier (SSRF-safe, loopback-only in dev).
-- **Security-sensitive modules**: server.rs (all auth + CORS),
+- **Security-sensitive modules**: server/ (all auth + CORS),
   http_client.rs + dns_resolver.rs (SSRF), freebird.rs (verification logic),
   main.rs (startup token validation), real_ip.rs (spoofing resistance),
   storage.rs (lease correctness underpins every confirmed result).

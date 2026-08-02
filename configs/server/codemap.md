@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Holds `nginx.conf`, the templated nginx reverse-proxy configuration for a production Witness deployment. Its job is twofold: terminate TLS for the gateway and witness nodes, and enforce **per-route IP allowlists** so that write/signing/federation routes are reachable only from trusted sources. This is the network-level access control layer for the whole stack; the app-layer default is `CorsLayer::permissive()` (see `crates/witness-gateway/src/server.rs` lines 383/1287/1316), so nginx is what actually gates who can talk to what.
+Holds `nginx.conf`, the templated nginx reverse-proxy configuration for a production Witness deployment. Its job is twofold: terminate TLS for the gateway and witness nodes, and enforce **per-route IP allowlists** so that write/signing/federation routes are reachable only from trusted sources. This is the network-level access control layer for the whole stack; the app-layer default is `CorsLayer::permissive()` (see `crates/witness-gateway/src/server/mod.rs` lines 264/502/531), so nginx is what actually gates who can talk to what.
 
 ## Design
 
@@ -60,6 +60,6 @@ All proxied routes forward `Host` and `X-Real-IP`; restricted gateway routes add
 ## Integration
 
 - Reverse-proxies `crates/witness-gateway` (the `gateway_backend` upstream) and `crates/witness-node` (three witness upstreams).
-- Route paths must match handlers in `crates/witness-gateway/src/server.rs`; the nginx allowlist model is the compensating control for the `CorsLayer::permissive()` default in that server.
+- Route paths must match handlers in `crates/witness-gateway/src/server/routes.rs`; the nginx allowlist model is the compensating control for the `CorsLayer::permissive()` default in that server.
 - `/ws/events` supports the live event ticker consumed by `landing/index.html` (`wss://gateway.metacan.org/ws/events`).
 - Consumed as a deployment template by operators (substitute placeholders, point Let's Encrypt paths at the real domain); it is the bare-metal/VM counterpart to the Docker networking in `docker-compose.yaml`.
