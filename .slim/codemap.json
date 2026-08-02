@@ -1,7 +1,7 @@
 {
   "metadata": {
     "version": "1.0.0",
-    "last_run": "2026-08-02T19:02:47.537Z",
+    "last_run": "2026-08-02T19:15:42.726Z",
     "root": "/Users/edith/dev/witness",
     "include_patterns": [
       "crates/**/src/**/*.rs",
@@ -83,7 +83,7 @@
     "crates/witness-gateway/src/metrics.rs": "5f3d909cf1ab7d469e61abbe48eaaf68",
     "crates/witness-gateway/src/real_ip.rs": "bf8be23a1fceba0906c259900ebf26e4",
     "crates/witness-gateway/src/reconciler.rs": "a8dab9bfe69c8392dff8fdc4f63f2042",
-    "crates/witness-gateway/src/server.rs": "f8a21eb5970dd905bcf1369dd8ad4dee",
+    "crates/witness-gateway/src/server.rs": "c5958b0eacd462f8f6ee0f6af16a4828",
     "crates/witness-gateway/src/storage.rs": "1a7fe9dce56efcff4b92843919ce68c9",
     "crates/witness-gateway/src/traits.rs": "8e2cee128e4948e22b555c0eceb6ea89",
     "crates/witness-gateway/src/witness_client.rs": "9ff6f4c34daca985f7eea977c825cf15",
@@ -117,7 +117,7 @@
     ".": "8ade371e5bdb6469538024a55ecbfa18",
     "configs": "9bf3fb4cf95e383c727ce3e0131b1764",
     "configs/server": "9bf3fb4cf95e383c727ce3e0131b1764",
-    "crates": "13c66d239d74e0238f505819678570f5",
+    "crates": "04e6717f24e2b109369a356f6b26b1eb",
     "crates/witness-auditor": "ed2f662c353dbb2f17d0951ce4486756",
     "crates/witness-auditor/migrations": "732836f8d7671ad44f1d1317ebb57ee4",
     "crates/witness-auditor/src": "5cfff6db9a031f977b90cd2c6708f2a4",
@@ -126,9 +126,9 @@
     "crates/witness-cli/src/commands": "3a0ef5df50468c2e2c3f4045b819daab",
     "crates/witness-core": "b543161211fd4981fa33eb329441eb7f",
     "crates/witness-core/src": "285413cccbb964b71da4c864e77a5084",
-    "crates/witness-gateway": "3eb25111f67d5a96614259d5ed4c4e28",
+    "crates/witness-gateway": "db5a076301f9a3eb83dba14781c4f04a",
     "crates/witness-gateway/migrations": "e668a762e40ab7e6f24f8a8cef74ba00",
-    "crates/witness-gateway/src": "76a3ce59f0983f8fbf20036399d99734",
+    "crates/witness-gateway/src": "600bb452c60486141a138b1979232a9d",
     "crates/witness-node": "2b3e03531019e3cda69a2dfa4c7b9803",
     "crates/witness-node/src": "8bb626948df944cb33c936c2fbed0cbc",
     "examples": "a968f670b5d603b3be7f38952b64104c",

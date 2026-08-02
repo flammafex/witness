@@ -28,8 +28,8 @@ use witness_core::types::{AttestationJobResponse, AttestationJobStatus, CreateAt
 use witness_core::{
     merkle::{consistency_path, inclusion_path},
     Attestation, BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
-    LogConsistencyProof, MerkleTree, NetworkConfig, ProofBundle, SignResponse, SignedTreeHead,
-    VerifyRequest, VerifyResponse, WitnessInfo,
+    LogConsistencyProof, MerkleProof, MerkleTree, NetworkConfig, ProofBundle, SignResponse,
+    SignedTreeHead, VerifyRequest, VerifyResponse, WitnessInfo,
 };
 
 use crate::admin::{admin_router, AdminState};
@@ -577,14 +577,34 @@ async fn network_config_handler(State(state): State<CoreState>) -> impl IntoResp
     Json((*state.config).clone())
 }
 
+/// Decode a hex-encoded SHA-256 hash from a path/query parameter into a
+/// fixed-size byte array, mapping malformed hex or wrong-length values to
+/// `AppError::InvalidHash`.
+fn decode_hash(hash: &str) -> Result<[u8; 32], AppError> {
+    let hash_bytes = hex::decode(hash).map_err(|_| AppError::InvalidHash)?;
+    hash_bytes.try_into().map_err(|_| AppError::InvalidHash)
+}
+
+/// Rebuild the merkle tree over a batch's stored leaves and produce the
+/// inclusion proof for `merkle_index`.
+async fn build_merkle_inclusion_proof(
+    storage: &Storage,
+    batch_id: i64,
+    merkle_index: usize,
+) -> Result<MerkleProof, AppError> {
+    let batch_hashes = storage.get_batch_attestation_hashes(batch_id).await?;
+    let tree = MerkleTree::new(batch_hashes);
+    tree.inclusion_proof(merkle_index)
+        .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))
+}
+
 async fn get_attestation_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Looking up attestation job for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array = decode_hash(&hash)?;
 
     let job = state
         .storage
@@ -636,8 +656,7 @@ async fn get_anchors_handler(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Looking up external anchors for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array = decode_hash(&hash)?;
 
     let _attestation = state
         .storage
@@ -676,8 +695,7 @@ async fn get_proof_handler(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Looking up merkle proof for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array = decode_hash(&hash)?;
     let job = state
         .storage
         .get_job(&hash_array)
@@ -695,12 +713,7 @@ async fn get_proof_handler(
 
     let (batch_id, merkle_index, merkle_root) = batch_info;
 
-    let batch_hashes = state.storage.get_batch_attestation_hashes(batch_id).await?;
-
-    let tree = MerkleTree::new(batch_hashes);
-    let proof = tree
-        .inclusion_proof(merkle_index)
-        .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))?;
+    let proof = build_merkle_inclusion_proof(&state.storage, batch_id, merkle_index).await?;
 
     Ok(Json(ProofResponse {
         hash,
@@ -723,8 +736,7 @@ async fn get_proof_bundle_handler(
 ) -> Result<impl IntoResponse, AppError> {
     tracing::debug!("Building proof bundle for hash: {}", hash);
 
-    let hash_bytes = hex::decode(&hash).map_err(|_| AppError::InvalidHash)?;
-    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array = decode_hash(&hash)?;
 
     let job = state
         .storage
@@ -746,11 +758,8 @@ async fn get_proof_bundle_handler(
             .await?
             .ok_or(AppError::NotFound)?;
 
-        let batch_hashes = state.storage.get_batch_attestation_hashes(batch_id).await?;
-        let tree = MerkleTree::new(batch_hashes);
-        let mut merkle_proof = tree
-            .inclusion_proof(merkle_index)
-            .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))?;
+        let mut merkle_proof =
+            build_merkle_inclusion_proof(&state.storage, batch_id, merkle_index).await?;
         // The on-disk merkle_root is authoritative; copy it onto the proof so
         // verifiers don't depend on whatever the in-memory tree just computed.
         merkle_proof.root = merkle_root;
@@ -867,8 +876,7 @@ async fn get_log_proof_handler(
     State(state): State<CoreState>,
     axum::extract::Query(q): axum::extract::Query<LogProofQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let hash_bytes = hex::decode(&q.hash).map_err(|_| AppError::InvalidHash)?;
-    let hash_array: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash_array = decode_hash(&q.hash)?;
 
     let leaf_index = state
         .storage
@@ -923,8 +931,7 @@ async fn create_attestation_handler(
     Json(request): Json<CreateAttestationRequest>,
 ) -> Result<(StatusCode, Json<AttestationJobResponse>), AppError> {
     let _timer = RequestTimer::new("attestations");
-    let hash_bytes = hex::decode(&request.hash).map_err(|_| AppError::InvalidHash)?;
-    let hash: [u8; 32] = hash_bytes.try_into().map_err(|_| AppError::InvalidHash)?;
+    let hash = decode_hash(&request.hash)?;
 
     if let Some(job) = state.storage.get_job(&hash).await? {
         return Ok((job_http_status(job.status), Json(job)));
