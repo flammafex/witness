@@ -101,7 +101,7 @@ touch "$PROJECT_ROOT/examples/gateway3/gateway.db"
 
 cargo run --release -p witness-gateway -- \
     --config "$PROJECT_ROOT/examples/gateway3/network.json" \
-    --port 5002 \
+    --port 5003 \
     --database "$PROJECT_ROOT/examples/gateway3/gateway.db" \
     > "examples/gateway3/gateway.log" 2>&1 &
 

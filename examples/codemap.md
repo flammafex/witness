@@ -23,8 +23,7 @@ All scripts assume they run from the workspace root (`PROJECT_ROOT="$(pwd)"`), u
 ### Triple-gateway mode — 3 independent networks (`setup-triple.sh`, `start-triple.sh`)
 
 - **setup-triple.sh**: same pattern for a third network — `examples/gateway3/`, witnesses on **4007–4009** (`network_id` `gateway3-network`), threshold 2.
-- **start-triple.sh**: launches 9 witness nodes and 3 gateways (**5001/5002/5003**).
-- **Observed discrepancy:** the gateway-3 launch block passes `--port 5002` (same as gateway 2) instead of `--port 5003`, so the third gateway will conflict with the second on port 5002. The banner and README assume 5003. Flag before relying on triple mode as-is.
+- **start-triple.sh**: launches 9 witness nodes and 3 gateways (**5001/5002/5003**). A prior discrepancy (gateway-3 passing `--port 5002`) has been fixed.
 
 ### `federation/` — 3 networks that cross-anchor (`setup.sh`, `start.sh`, `demo.sh`, `stop.sh`)
 
