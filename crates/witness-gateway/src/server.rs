@@ -189,7 +189,9 @@ impl FederationAuthStore {
     pub fn validate_auth_token(&self, token: &str) -> bool {
         let now = epoch_secs();
         for entry in self.current.iter() {
-            if entry.value().token == token && entry.value().expires_at > now {
+            if witness_core::constant_time_eq(&entry.value().token, token)
+                && entry.value().expires_at > now
+            {
                 return true;
             }
         }
