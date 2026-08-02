@@ -121,3 +121,14 @@ A change is complete when:
 7. If deployment assets changed: Docker or example network smoke-tested.
 8. No secrets, private keys, bearer tokens, or `.env` values committed.
 9. Crate boundaries respected; no logic leaked across them.
+
+## Repository Map
+
+A full codemap is available at `codemap.md` in the project root.
+
+Before working on any task, read `codemap.md` to understand:
+- Project architecture and entry points
+- Directory responsibilities and design patterns
+- Data flow and integration points between modules
+
+For deep work on a specific folder, also read that folder's `codemap.md`.
