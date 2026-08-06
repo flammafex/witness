@@ -1,0 +1,139 @@
+{
+  "cases": [
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 7,
+        "timestamp": 1700000000
+      },
+      "expect": "accept",
+      "name": "valid",
+      "signatures": [
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        },
+        {
+          "signature": "c344597f84350740859c4532eaa9a6175d4a83a2451201150c97022b165d1c9cd67240ae80a85ffe9bb1c8511e13d58754a4c03880141b39136f7eb096c8850c",
+          "witness_id": "w2"
+        }
+      ]
+    },
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 7,
+        "timestamp": 1700000000
+      },
+      "expect": "reject",
+      "name": "below_threshold",
+      "signatures": [
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        }
+      ]
+    },
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 7,
+        "timestamp": 1700000000
+      },
+      "expect": "reject",
+      "name": "duplicate_signer",
+      "signatures": [
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        },
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        }
+      ]
+    },
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 7,
+        "timestamp": 1700000000
+      },
+      "expect": "reject",
+      "name": "unknown_witness",
+      "signatures": [
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        },
+        {
+          "signature": "97de6ef1f1b65aaf1a0827bf431b0e4ca52e9aacd0539b73db0f57e408c50ca849a65c2a3835d3b7cefee3dfe59f83b85c33f61788e37e9a2682dcaca9247207",
+          "witness_id": "ghost"
+        }
+      ]
+    },
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 7,
+        "timestamp": 1700000000
+      },
+      "expect": "reject",
+      "name": "wrong_key",
+      "signatures": [
+        {
+          "signature": "f7c69dbd5b877559cfbbcb46d6dd14c9c1df6a18bf6082b28271239bf853f39825bbcd995b6cc9eb69ffed45fe17f2b2be296f809f9be6625fcb5d41260bb407",
+          "witness_id": "w1"
+        },
+        {
+          "signature": "c344597f84350740859c4532eaa9a6175d4a83a2451201150c97022b165d1c9cd67240ae80a85ffe9bb1c8511e13d58754a4c03880141b39136f7eb096c8850c",
+          "witness_id": "w2"
+        }
+      ]
+    },
+    {
+      "attestation": {
+        "hash": "abababababababababababababababababababababababababababababababab",
+        "network_id": "ed25519-net",
+        "sequence": 999,
+        "timestamp": 1700000000
+      },
+      "expect": "reject",
+      "name": "tampered_message",
+      "signatures": [
+        {
+          "signature": "69d0812417ebbf12698f6cd2cedd54f6c97adf555072fdb7f2520fc0031ba0b5709c0a72c0a1e448e4aa31fa5f2d7dc39369e04408b316c5e80157052f659905",
+          "witness_id": "w1"
+        },
+        {
+          "signature": "c344597f84350740859c4532eaa9a6175d4a83a2451201150c97022b165d1c9cd67240ae80a85ffe9bb1c8511e13d58754a4c03880141b39136f7eb096c8850c",
+          "witness_id": "w2"
+        }
+      ]
+    }
+  ],
+  "threshold": 2,
+  "version": 2,
+  "witnesses": [
+    {
+      "endpoint": "http://localhost",
+      "id": "w1",
+      "pubkey": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+    },
+    {
+      "endpoint": "http://localhost",
+      "id": "w2",
+      "pubkey": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+    },
+    {
+      "endpoint": "http://localhost",
+      "id": "w3",
+      "pubkey": "ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1"
+    }
+  ]
+}

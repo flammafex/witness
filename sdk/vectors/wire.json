@@ -1,0 +1,78 @@
+{
+  "aggregated_json": "{\"signature\":\"deadbeef\",\"signers\":[\"w1\",\"w2\",\"w3\"]}",
+  "enums": {
+    "attestation_job_status": {
+      "confirmed": "confirmed",
+      "failed": "failed",
+      "pending": "pending",
+      "retryable": "retryable"
+    },
+    "signature_scheme": {
+      "bls": "bls",
+      "ed25519": "ed25519"
+    }
+  },
+  "hex_adapters": {
+    "array32": {
+      "json": "{\"hash\":\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",\"timestamp\":1700000000,\"network_id\":\"hex-net\",\"sequence\":1}"
+    },
+    "decode": {
+      "accept": [
+        {
+          "bytes": "deadbeef",
+          "input": "DEADBEEF",
+          "name": "uppercase",
+          "reserialize": "deadbeef"
+        },
+        {
+          "bytes": "deadbeef",
+          "input": "DeAdBeEf",
+          "name": "mixed_case",
+          "reserialize": "deadbeef"
+        }
+      ],
+      "reject": [
+        {
+          "input": "abc",
+          "name": "odd_length"
+        },
+        {
+          "input": "zz",
+          "name": "non_hex"
+        }
+      ]
+    },
+    "vec": {
+      "json": "{\"witness_id\":\"w1\",\"signature\":\"deadbeef\"}"
+    }
+  },
+  "malformed": [
+    {
+      "expect": "reject",
+      "json": "{}",
+      "name": "empty"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signature\":\"deadbeef\"}",
+      "name": "partial_aggregated"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signatures\":\"not-an-array\"}",
+      "name": "partial_multisig"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signatures\":[{\"signature\":\"ZZ\",\"witness_id\":\"w1\"}]}",
+      "name": "bad_hex"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signature\":\"deadbeef\",\"signatures\":[{\"signature\":\"0102\",\"witness_id\":\"w1\"}],\"signers\":[\"w1\"]}",
+      "name": "ambiguous_both_shapes"
+    }
+  ],
+  "multisig_json": "{\"signatures\":[{\"signature\":\"0102030405\",\"witness_id\":\"w1\"},{\"signature\":\"aabbcc\",\"witness_id\":\"w2\"}]}",
+  "version": 2
+}

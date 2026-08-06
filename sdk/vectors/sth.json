@@ -1,0 +1,128 @@
+{
+  "bls": {
+    "expect": "accept",
+    "sth": {
+      "signed_attestation": {
+        "attestation": {
+          "hash": "0454f687ba2eb448b5d0d1e7238c3bbcf57c5eb12b8039a0c7519e05a217f20e",
+          "network_id": "sth-bls",
+          "sequence": 4,
+          "timestamp": 1700000011
+        },
+        "signatures": {
+          "signature": "8fb0a71c3f9e24eed897e643dc98a36bf7ab0470c0c70534c37c3848dce3b726f0ef023612e9b40b789110b7c5ca54f9",
+          "signers": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "tree_head": {
+        "network_id": "sth-bls",
+        "root_hash": "0bdd9ab2021b08e98613d9495870a4e3445ddc83e83bcff6a6d6f1ccd5120105",
+        "timestamp": 1700000011,
+        "tree_size": 4
+      }
+    },
+    "threshold": 2,
+    "witnesses": [
+      {
+        "endpoint": "http://localhost",
+        "id": "w1",
+        "pubkey": "8653a9d66b02d8db093979d662663962c09fa001e0a306a9050e32979fd27b40404d5f2a1dbc5ac86587337c484eb1760a7652cfb5b337bbd2f562d7e09a96ccd9ee64b066e8bc6993efaff1e5e57419b01dd7af8490536a5e03172680625611"
+      },
+      {
+        "endpoint": "http://localhost",
+        "id": "w2",
+        "pubkey": "8d738a80279455848dc03cb1db7d47229303eb0c00b7bd05e084ad39de7721854d27649b536885bf4214e112b97cac2100ba9512a9f03b62f7c131098894174801d53a8cd26e8a44401bb6cbb68fa9c58fc266315f68d74a6cbdddfc0220d292"
+      },
+      {
+        "endpoint": "http://localhost",
+        "id": "w3",
+        "pubkey": "93cb480c0c21b2f1ca27c438ea7092cf52e15a6ab97b341e96c843b1a5556de618b4739fffee224c184fdc436bb2f15c11ea93268078ef1c89204424e4605bd973bb6dd5e792de01b76e22b756b6e90eef4ea7686313e71eafef18d7b8568895"
+      }
+    ]
+  },
+  "digests": [
+    {
+      "digest_hex": "c1683f0ebf34ec0ec8d3bb67acfc5fad64e11000321612838489b2bd771c6946",
+      "name": "empty_network",
+      "tree_head": {
+        "network_id": "",
+        "root_hash": "0101010101010101010101010101010101010101010101010101010101010101",
+        "timestamp": 1700000000,
+        "tree_size": 0
+      }
+    },
+    {
+      "digest_hex": "753193408c1a07e7b0c21fab979cd08cb376ca3cbd1b4df9aa7459a07aa128e8",
+      "name": "typical",
+      "tree_head": {
+        "network_id": "sth-net",
+        "root_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+        "timestamp": 1700000001,
+        "tree_size": 42
+      }
+    },
+    {
+      "digest_hex": "0d55d3f701b4c1d79fcfe87500f8166ac1270143eadac9f78c86eb7b58d51f70",
+      "name": "multibyte",
+      "tree_head": {
+        "network_id": "网络",
+        "root_hash": "0303030303030303030303030303030303030303030303030303030303030303",
+        "timestamp": 1700000002,
+        "tree_size": 7
+      }
+    }
+  ],
+  "ed25519": {
+    "expect": "accept",
+    "sth": {
+      "signed_attestation": {
+        "attestation": {
+          "hash": "9edd210dbf8d86dd53194437a0aa1fe62c3126b1438560acac5016e6a38ebe28",
+          "network_id": "sth-ed25519",
+          "sequence": 5,
+          "timestamp": 1700000010
+        },
+        "signatures": {
+          "signatures": [
+            {
+              "signature": "02e071354c8d3fa101d03fe633b055a6a33044ec0dbc931db91c4bd6c331c8e3fb3ee2f62871ddadcd6e6ff83997817a8ee917f9a65237fbbc6b0e6f4baca80b",
+              "witness_id": "w1"
+            },
+            {
+              "signature": "f4dc0f101961daeb158caa06e1c221c2ac3fc66f057dc5acf14cb28fa68da7cbc1d8e6bfbcffc1565dd37c204b49a54e073931565648fda106edbf85f9fdfb08",
+              "witness_id": "w2"
+            }
+          ]
+        }
+      },
+      "tree_head": {
+        "network_id": "sth-ed25519",
+        "root_hash": "a5e070bf48b86aa2def5cc621d5b0a0abe9b3ef968ae1fca076c0e62bc0507c8",
+        "timestamp": 1700000010,
+        "tree_size": 5
+      }
+    },
+    "threshold": 2,
+    "witnesses": [
+      {
+        "endpoint": "http://localhost",
+        "id": "w1",
+        "pubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+      },
+      {
+        "endpoint": "http://localhost",
+        "id": "w2",
+        "pubkey": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21"
+      },
+      {
+        "endpoint": "http://localhost",
+        "id": "w3",
+        "pubkey": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633"
+      }
+    ]
+  },
+  "version": 2
+}
