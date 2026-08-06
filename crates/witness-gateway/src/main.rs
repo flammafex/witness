@@ -11,10 +11,10 @@ use witness_gateway::{
     federation_client::FederationClient,
     freebird::FreebirdClient,
     metrics,
+    node_client::NodeClient,
     reconciler::{AttestationWorker, Reconciler},
     server::GatewayServer,
     storage::Storage,
-    witness_client::WitnessClient,
 };
 
 fn is_non_loopback_host(host: &str) -> bool {
@@ -167,7 +167,7 @@ async fn main() -> Result<()> {
 
     // Witness HTTP client shared between the leased attestation worker and
     // batch-manager STH signing.
-    let witness_client = Arc::new(WitnessClient::new());
+    let witness_client = Arc::new(NodeClient::new());
 
     // Initialize batch manager (Phase 2) with anchor manager and federation client
     let batch_manager = Arc::new(
@@ -259,7 +259,7 @@ async fn main() -> Result<()> {
     // Witness health checker (every 30 seconds)
     let health_config = network_config.clone();
     tokio::spawn(async move {
-        let client = WitnessClient::new();
+        let client = NodeClient::new();
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;

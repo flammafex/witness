@@ -155,7 +155,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   `bearer_auth(peer.auth_token)`), `validate_outbound_url` SSRF check per peer.
 - **Consumers**: main.rs, batch_manager.rs.
 
-### witness_client.rs — witness signing client
+### node_client.rs — witness signing client
 - **Responsibility**: Talk to `witness-node` instances: request signatures and
   poll health.
 - **Key items**: `request_signature` (POST `<endpoint>/v1/sign`, bearer auth
@@ -213,7 +213,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 - **Key items**: `build_client(allow_http)`, `validate_outbound_url` (rejects
   loopback/private/link-local via DNS or literal), `validate_local_dev_url`
   (plaintext loopback only, for dev Freebird), `check_ip_allowed`.
-- **Consumers**: witness_client.rs, federation_client.rs, freebird.rs,
+- **Consumers**: node_client.rs, federation_client.rs, freebird.rs,
   anchor_providers.rs.
 - **Security**: the SSRF filter for all outbound network calls; keep enabled.
 
@@ -241,7 +241,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
   so `AttestationWorker` and `BatchManager` (STH signing) can be unit-tested with
   mock witnesses.
 - **Key items**: `WitnessClientTrait::request_signature`; blanket impl for
-  `witness_client::WitnessClient`.
+  `node_client::NodeClient`.
 - **Consumers**: reconciler.rs (worker holds `Arc<dyn WitnessClientTrait>`),
   batch_manager.rs (`BatchManager` holds `Arc<dyn WitnessClientTrait>` for STH
   signing).
@@ -266,7 +266,7 @@ over the same `Arc<Storage>` and `Arc<NetworkConfig>`. All auth comparisons use
 (admission: dedupe, per-hash lock, rate limit, Freebird) →
 `storage.reserve_job` (canonical pending tuple) → broadcast `AttestationEvent`
 → **Reconciler loop** (`reconciler.rs`) `claim_job` → `collect_verified_result`
-(witness fan-out via `WitnessClient`, per-signature verify) → threshold check →
+(witness fan-out via `NodeClient`, per-signature verify) → threshold check →
 `complete_verified_job` → confirmed, immutable.
 
 **Batch loop** → `BatchManager` tick → verified candidates →
@@ -287,7 +287,7 @@ inclusion for offline verification by clients and the auditor.
 
 - **witness-core**: all types, crypto, Merkle/log proof computation, verification
   and constant-time helpers; the gateway never implements signing itself.
-- **witness-node**: outbound `WitnessClient` for signatures; inbound clients of
+- **witness-node**: outbound `NodeClient` for signatures; inbound clients of
   our endpoints include `witness-cli` and `witness-auditor`.
 - **Peers**: outbound `FederationClient` ↔ inbound `federation_anchor_handler`
   (both Bearer-authenticated).

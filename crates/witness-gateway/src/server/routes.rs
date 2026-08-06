@@ -11,20 +11,29 @@ use tokio::sync::Mutex;
 use witness_core::merkle::{consistency_path, inclusion_path};
 use witness_core::types::{AttestationJobResponse, AttestationJobStatus, CreateAttestationRequest};
 use witness_core::{
-    BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
-    LogConsistencyProof, MerkleProof, MerkleTree, ProofBundle, SignedTreeHead, VerifyRequest,
-    VerifyResponse,
+    AttestationEvent, BatchInclusion, CrossAnchorRequest, CrossAnchorResponse, ExternalAnchorProof,
+    LogConsistencyProof, LogInclusionProofResponse, MerkleProof, MerkleProofResponse, MerkleTree,
+    NetworkConfigPublic, ProofBundle, VerifyRequest, VerifyResponse,
 };
 
-use super::{
-    AttestationEvent, AttestationState, CoreState, FederationState, MetricsState,
-    NetworkConfigPublic,
-};
+// Types referenced only by the (feature-gated) `#[utoipa::path]` annotations.
+#[cfg(feature = "openapi")]
+use witness_core::{NetworkConfig, SignedTreeHead};
+
+use super::{AttestationState, CoreState, FederationState, MetricsState};
 use crate::epoch::epoch_secs;
 use crate::error::AppError;
 use crate::metrics::RequestTimer;
 use crate::real_ip::real_ip;
 use crate::storage::Storage;
+
+/// Response body for `GET /health`.
+#[cfg(feature = "openapi")]
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)] // schema-only type; fields are never read at runtime
+pub(super) struct HealthResponse {
+    pub status: String,
+}
 
 // ============================================================================
 // CoreState handlers
@@ -34,10 +43,24 @@ pub(super) async fn root_handler() -> impl IntoResponse {
     axum::response::Redirect::temporary("/admin")
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse)
+    )
+))]
 pub(super) async fn health_handler() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/config",
+    responses(
+        (status = 200, description = "Public network configuration (informational only; not a trust anchor)", body = NetworkConfigPublic)
+    )
+))]
 pub(super) async fn config_handler(State(state): State<CoreState>) -> impl IntoResponse {
     Json(NetworkConfigPublic {
         id: state.config.id.clone(),
@@ -51,6 +74,13 @@ pub(super) async fn config_handler(State(state): State<CoreState>) -> impl IntoR
 /// federation peers, external anchor providers) for offline verification of
 /// proof bundles.  Auth tokens are omitted via `#[serde(skip_serializing)]`
 /// on the relevant fields.
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/network",
+    responses(
+        (status = 200, description = "Full network configuration with witness public keys (auth tokens stripped server-side)", body = NetworkConfig)
+    )
+))]
 pub(super) async fn network_config_handler(State(state): State<CoreState>) -> impl IntoResponse {
     Json((*state.config).clone())
 }
@@ -76,6 +106,17 @@ pub(super) async fn build_merkle_inclusion_proof(
         .ok_or_else(|| AppError::Other(anyhow::anyhow!("Failed to generate merkle proof")))
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/attestations/{hash}",
+    params(
+        ("hash" = String, Path, description = "Hex-encoded SHA-256 hash (64 lowercase hex chars)")
+    ),
+    responses(
+        (status = 200, description = "Attestation job for the hash", body = AttestationJobResponse),
+        (status = 404, description = "No attestation job exists for this hash")
+    )
+))]
 pub(super) async fn get_attestation_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
@@ -92,6 +133,14 @@ pub(super) async fn get_attestation_handler(
     Ok(Json(job))
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    post,
+    path = "/v1/verify",
+    request_body = VerifyRequest,
+    responses(
+        (status = 200, description = "Gateway's verification opinion (non-authoritative; prefer local verification)", body = VerifyResponse)
+    )
+))]
 pub(super) async fn verify_handler(
     State(state): State<CoreState>,
     Json(request): Json<VerifyRequest>,
@@ -128,6 +177,17 @@ pub(super) async fn verify_handler(
     }
 }
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/anchors/{hash}",
+    params(
+        ("hash" = String, Path, description = "Hex-encoded SHA-256 hash (64 lowercase hex chars)")
+    ),
+    responses(
+        (status = 200, description = "External anchor proofs (empty array if the attestation is known but not yet batched)", body = [ExternalAnchorProof]),
+        (status = 404, description = "Unknown attestation")
+    )
+))]
 pub(super) async fn get_anchors_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
@@ -158,15 +218,17 @@ pub(super) async fn get_anchors_handler(
 }
 
 /// Response for merkle inclusion proof.
-#[derive(serde::Serialize)]
-pub(super) struct ProofResponse {
-    hash: String,
-    proof: Vec<String>,
-    index: usize,
-    merkle_root: String,
-    batch_id: u64,
-}
-
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/proof/{hash}",
+    params(
+        ("hash" = String, Path, description = "Hex-encoded SHA-256 hash (64 lowercase hex chars)")
+    ),
+    responses(
+        (status = 200, description = "Merkle inclusion proof", body = MerkleProofResponse),
+        (status = 404, description = "Attestation not confirmed or not yet batched")
+    )
+))]
 pub(super) async fn get_proof_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
@@ -193,7 +255,7 @@ pub(super) async fn get_proof_handler(
 
     let proof = build_merkle_inclusion_proof(&state.storage, batch_id, merkle_index).await?;
 
-    Ok(Json(ProofResponse {
+    Ok(Json(MerkleProofResponse {
         hash,
         proof: proof.siblings.iter().map(hex::encode).collect(),
         index: merkle_index,
@@ -208,6 +270,17 @@ pub(super) async fn get_proof_handler(
 /// merkle inclusion proof (if batched), peer cross-anchors, and external
 /// anchor proofs.  Clients can verify the bundle offline against the
 /// network configurations using [`witness_core::verify_proof_bundle`].
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/bundle/{hash}",
+    params(
+        ("hash" = String, Path, description = "Hex-encoded SHA-256 hash (64 lowercase hex chars)")
+    ),
+    responses(
+        (status = 200, description = "Self-contained proof bundle", body = ProofBundle),
+        (status = 404, description = "Attestation not found")
+    )
+))]
 pub(super) async fn get_proof_bundle_handler(
     State(state): State<CoreState>,
     axum::extract::Path(hash): axum::extract::Path<String>,
@@ -265,6 +338,14 @@ pub(super) async fn get_proof_bundle_handler(
 
 /// Latest signed tree head for the gateway's home network.  Returns 404 if
 /// no batches have closed yet (the log is empty).
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/log/sth",
+    responses(
+        (status = 200, description = "Latest signed tree head", body = SignedTreeHead),
+        (status = 404, description = "Log is empty (no batches closed yet)")
+    )
+))]
 pub(super) async fn get_latest_sth_handler(
     State(state): State<CoreState>,
 ) -> Result<impl IntoResponse, AppError> {
@@ -278,6 +359,17 @@ pub(super) async fn get_latest_sth_handler(
 
 /// Look up a historical STH at a specific tree size.  Auditors use this to
 /// pin a known-good snapshot and walk forward via consistency proofs.
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/log/sth/{tree_size}",
+    params(
+        ("tree_size" = u64, Path, description = "Tree size to fetch the signed tree head for")
+    ),
+    responses(
+        (status = 200, description = "Signed tree head at the given tree size", body = SignedTreeHead),
+        (status = 404, description = "No STH published at this tree size")
+    )
+))]
 pub(super) async fn get_sth_at_size_handler(
     State(state): State<CoreState>,
     axum::extract::Path(tree_size): axum::extract::Path<u64>,
@@ -299,6 +391,18 @@ pub(super) struct ConsistencyQuery {
 /// RFC 9162 §4.10 GetConsistency: prove that the log of size `first` is a
 /// prefix of the log of size `second`.  Both endpoints are inclusive — they
 /// must each correspond to a previously published STH.
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/log/consistency",
+    params(
+        ("first" = u64, Query, description = "Old tree size (>= 1)"),
+        ("second" = u64, Query, description = "New tree size (>= first)")
+    ),
+    responses(
+        (status = 200, description = "Consistency proof linking the two signed tree heads", body = LogConsistencyProof),
+        (status = 404, description = "No STH at one of the requested tree sizes")
+    )
+))]
 pub(super) async fn get_consistency_handler(
     State(state): State<CoreState>,
     axum::extract::Query(q): axum::extract::Query<ConsistencyQuery>,
@@ -340,16 +444,20 @@ pub(super) struct LogProofQuery {
     tree_size: u64,
 }
 
-#[derive(serde::Serialize)]
-pub(super) struct LogInclusionProofResponse {
-    leaf_index: u64,
-    tree_size: u64,
-    audit_path: Vec<String>,
-    sth: SignedTreeHead,
-}
-
 /// RFC 9162 §4.11 GetProofByHash: inclusion proof for `hash` against the
 /// STH at `tree_size`.
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/v1/log/proof",
+    params(
+        ("hash" = String, Query, description = "Hex-encoded SHA-256 hash (64 lowercase hex chars)"),
+        ("tree_size" = u64, Query, description = "Tree size to prove inclusion against")
+    ),
+    responses(
+        (status = 200, description = "Log inclusion proof", body = LogInclusionProofResponse),
+        (status = 404, description = "Hash not in the log at this tree size")
+    )
+))]
 pub(super) async fn get_log_proof_handler(
     State(state): State<CoreState>,
     axum::extract::Query(q): axum::extract::Query<LogProofQuery>,
@@ -394,6 +502,16 @@ pub(super) async fn get_log_proof_handler(
 // AttestationState handler
 // ============================================================================
 
+#[cfg_attr(feature = "openapi", utoipa::path(
+    post,
+    path = "/v1/attestations",
+    request_body = CreateAttestationRequest,
+    responses(
+        (status = 200, description = "Attestation job reached a terminal state (confirmed or failed)", body = AttestationJobResponse),
+        (status = 202, description = "Attestation job is pending or retryable", body = AttestationJobResponse),
+        (status = 429, description = "Rate limited")
+    )
+))]
 pub(super) async fn create_attestation_handler(
     State(state): State<AttestationState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -469,7 +587,7 @@ pub(super) async fn create_attestation_handler(
 
     if reservation.created {
         let event = AttestationEvent {
-            event_type: "attestation",
+            event_type: "attestation".to_string(),
             hash: request.hash,
             timestamp: reservation.job.attestation.timestamp,
         };

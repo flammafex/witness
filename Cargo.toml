@@ -6,10 +6,12 @@ members = [
     "crates/witness-gateway",
     "crates/witness-cli",
     "crates/witness-auditor",
+    "crates/witness-client",
+    "crates/witness-core-wasm",
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["The Carpocratian Church of Commonaltity and Equality, Inc."]
@@ -20,11 +22,13 @@ description = "A content-private, accountless quorum timestamper"
 
 [workspace.dependencies]
 # Core dependencies
-witness-core = { path = "crates/witness-core", version = "0.7.0" }
+witness-core = { path = "crates/witness-core", version = "0.8.0" }
+witness-client = { path = "crates/witness-client", version = "0.8.0" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+schemars = "0.8"
 
 # Cryptography
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
@@ -43,6 +47,10 @@ tower-http = { version = "0.5", features = ["cors"] }
 # HTTP client
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 
+# WebSocket (witness-client `ws` feature)
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 
@@ -51,6 +59,9 @@ clap = { version = "4.4", features = ["derive", "env"] }
 
 # Rate limiting
 governor = "0.8"
+
+# OpenAPI documentation (witness-gateway `openapi` feature, default off)
+utoipa = { version = "5", features = ["yaml"] }
 
 # Utilities
 anyhow = "1.0"

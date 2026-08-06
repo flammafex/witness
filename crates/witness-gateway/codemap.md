@@ -64,7 +64,7 @@ persisted as a confirmed result.
    → optional Freebird token verification (required mode → 401 without token) →
    `storage.reserve_job` atomically creates the canonical pending tuple.
 2. **Threshold aggregation** — the `Reconciler` loop calls `storage.claim_job`
-   (leases one due job), validates config invariants, fans out `WitnessClient`
+   (leases one due job), validates config invariants, fans out `NodeClient`
    signing requests in parallel, verifies every individual response
    (Ed25519/BLS, witness-id match, no duplicates), and on reaching threshold
    aggregates and re-verifies before `complete_verified_job`.
@@ -93,7 +93,7 @@ persisted as a confirmed result.
   `verify_signed_attestation`, `aggregate_signatures_bls`, `constant_time_eq`.
   Crate boundary is strict: gateway orchestrates and verifies, it never defines
   crypto or serialization.
-- **witness-node** — via `WitnessClient` (HTTP `POST /v1/sign`, bearer auth with
+- **witness-node** — via `NodeClient` (HTTP `POST /v1/sign`, bearer auth with
   per-witness tokens; `GET /health` for the health poller).
 - **Peer federations** — via `FederationClient` (outbound) and the inbound
   `/v1/federation/anchor` route (bearer `inbound_auth_token`, in-memory

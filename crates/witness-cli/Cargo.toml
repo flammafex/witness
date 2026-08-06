@@ -16,11 +16,11 @@ path = "src/main.rs"
 
 [dependencies]
 witness-core.workspace = true
+witness-client.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-reqwest.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 hex.workspace = true

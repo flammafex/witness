@@ -1,4 +1,3 @@
-mod client;
 mod commands;
 
 use anyhow::Result;
@@ -171,8 +170,8 @@ async fn main() -> Result<()> {
             verify::run(&cli.gateway, &file, &output).await?;
         }
         Commands::Config {} => {
-            let client = client::WitnessClient::new(&cli.gateway);
-            let config = client.get_config().await?;
+            let client = witness_client::WitnessClient::new(&cli.gateway)?;
+            let config = client.public_config().await?;
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
         Commands::Anchors { hash, output } => {

@@ -9,10 +9,10 @@ use witness_core::{
     SignRequest, SignResponse, SignatureScheme, WitnessInfo,
 };
 use witness_gateway::freebird::FreebirdClient;
+use witness_gateway::node_client::NodeClient;
 use witness_gateway::reconciler::{AttestationWorker, Reconciler};
 use witness_gateway::server::GatewayServer;
 use witness_gateway::storage::Storage;
-use witness_gateway::witness_client::WitnessClient;
 
 fn get_metrics_handle() -> metrics_exporter_prometheus::PrometheusHandle {
     static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
@@ -132,7 +132,7 @@ impl TestApp {
             let worker = AttestationWorker::new(
                 network_config,
                 storage.clone(),
-                Arc::new(WitnessClient::new()),
+                Arc::new(NodeClient::new()),
             );
             tokio::spawn(Reconciler::new(worker, cancel.clone()).run());
         }

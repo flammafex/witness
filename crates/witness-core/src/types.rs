@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Core attestation: what gets signed by witnesses
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Attestation {
     /// SHA-256 hash of the content being timestamped
     #[serde(with = "crate::serde_hex::array32")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub hash: [u8; 32],
 
     /// Unix timestamp in seconds
@@ -65,18 +68,22 @@ impl fmt::Display for Attestation {
 }
 
 /// A single witness's signature on an attestation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WitnessSignature {
     /// ID of the witness that signed
     pub witness_id: String,
 
     /// Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
     #[serde(with = "crate::serde_hex::vec")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub signature: Vec<u8>,
 }
 
 /// Complete signed attestation with all witness signatures
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SignedAttestation {
     pub attestation: Attestation,
 
@@ -125,7 +132,8 @@ impl SignedAttestation {
 }
 
 /// Information about a witness node
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WitnessInfo {
     /// Unique identifier for this witness
     pub id: String,
@@ -139,11 +147,13 @@ pub struct WitnessInfo {
     /// Bearer token used by gateways when calling this witness's signing endpoint.
     /// Never serialized in public API responses.
     #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub auth_token: Option<String>,
 }
 
 /// Network configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct NetworkConfig {
     /// Network identifier
     pub id: String,
@@ -206,7 +216,7 @@ impl NetworkConfig {
 }
 
 /// Request to timestamp a hash
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimestampRequest {
     /// SHA-256 hash to timestamp (hex encoded)
     pub hash: String,
@@ -217,7 +227,8 @@ pub struct TimestampRequest {
 }
 
 /// Request to create or retrieve the canonical attestation job for a hash.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateAttestationRequest {
     /// SHA-256 hash to attest (hex encoded).
     pub hash: String,
@@ -228,7 +239,8 @@ pub struct CreateAttestationRequest {
 }
 
 /// Durable lifecycle state of an attestation job.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AttestationJobStatus {
     Pending,
@@ -242,7 +254,8 @@ pub enum AttestationJobStatus {
 /// The canonical tuple is always present. `signed_attestation` is present only
 /// after the job has reached `confirmed`; pending and failed jobs never expose
 /// an unsigned `SignedAttestation` placeholder.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AttestationJobResponse {
     pub attestation: Attestation,
     pub status: AttestationJobStatus,
@@ -262,7 +275,8 @@ pub struct AttestationJobResponse {
 }
 
 /// Freebird token for anonymous authorization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FreebirdToken {
     /// Base64url-encoded Freebird redemption token.
     pub token_b64: String,
@@ -299,7 +313,7 @@ fn default_freebird_consume_tokens() -> bool {
 }
 
 /// Response from successful timestamp request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimestampResponse {
     pub attestation: SignedAttestation,
     #[serde(default = "default_status_confirmed")]
@@ -311,13 +325,15 @@ fn default_status_confirmed() -> String {
 }
 
 /// Request to verify an attestation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VerifyRequest {
     pub attestation: SignedAttestation,
 }
 
 /// Response from verification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct VerifyResponse {
     pub valid: bool,
     pub verified_signatures: usize,
@@ -337,6 +353,48 @@ pub struct SignResponse {
     pub witness_id: String,
     #[serde(with = "crate::serde_hex::vec")]
     pub signature: Vec<u8>,
+}
+
+/// Public-facing subset of [`NetworkConfig`] — excludes internal endpoints,
+/// peer URLs, and auth tokens. Returned by `GET /v1/config`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct NetworkConfigPublic {
+    pub id: String,
+    pub threshold: usize,
+    pub signature_scheme: crate::signature_scheme::SignatureScheme,
+    pub witness_count: usize,
+}
+
+/// Event broadcast to WebSocket clients when an attestation is created.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct AttestationEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub hash: String,
+    pub timestamp: u64,
+}
+
+/// Response for a Merkle inclusion proof (`GET /v1/proof/:hash`).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct MerkleProofResponse {
+    pub hash: String,
+    pub proof: Vec<String>,
+    pub index: usize,
+    pub merkle_root: String,
+    pub batch_id: u64,
+}
+
+/// RFC 9162 §4.11 inclusion proof response (`GET /v1/log/proof`).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct LogInclusionProofResponse {
+    pub leaf_index: u64,
+    pub tree_size: u64,
+    pub audit_path: Vec<String>,
+    pub sth: crate::log::SignedTreeHead,
 }
 
 #[cfg(test)]
@@ -512,5 +570,107 @@ mod tests {
         assert!(config.find_witness("w1").is_some());
         assert!(config.find_witness("w2").is_some());
         assert!(config.find_witness("w3").is_none());
+    }
+
+    fn sample_config_with_tokens() -> NetworkConfig {
+        NetworkConfig {
+            id: "test".to_string(),
+            witnesses: vec![
+                WitnessInfo {
+                    id: "w1".to_string(),
+                    pubkey: "key1".to_string(),
+                    endpoint: "http://localhost:3001".to_string(),
+                    auth_token: Some("super-secret-token-1".to_string()),
+                },
+                WitnessInfo {
+                    id: "w2".to_string(),
+                    pubkey: "key2".to_string(),
+                    endpoint: "http://localhost:3002".to_string(),
+                    auth_token: Some("super-secret-token-2".to_string()),
+                },
+            ],
+            threshold: 1,
+            signature_scheme: Default::default(),
+            federation: Default::default(),
+            external_anchors: Default::default(),
+            federation_peers: vec![],
+        }
+    }
+
+    /// Accepted: a full `NetworkConfig` carrying `auth_token` values
+    /// round-trips locally (deserialize -> serialize -> deserialize) without
+    /// error. The token is only ever stripped at the serialization boundary,
+    /// never on the in-memory value.
+    #[test]
+    fn test_network_config_with_tokens_roundtrips_locally() {
+        let config = sample_config_with_tokens();
+
+        // Serialize -> deserialize -> serialize: must never error, even with
+        // tokens present in memory.
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: NetworkConfig = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&deserialized).unwrap();
+        let _deserialized2: NetworkConfig = serde_json::from_str(&json2).unwrap();
+
+        // The in-memory value still carries its tokens (they are only stripped
+        // from the serialized public wire form).
+        assert_eq!(
+            config.witnesses[0].auth_token.as_deref(),
+            Some("super-secret-token-1")
+        );
+        assert_eq!(
+            config.witnesses[1].auth_token.as_deref(),
+            Some("super-secret-token-2")
+        );
+    }
+
+    /// Rejected: serializing a full `NetworkConfig` must never leak the
+    /// `auth_token` value onto the wire.
+    #[test]
+    fn test_network_config_serialization_strips_auth_tokens() {
+        let config = sample_config_with_tokens();
+
+        let json = serde_json::to_string(&config).unwrap();
+
+        assert!(
+            !json.contains("super-secret-token-1"),
+            "serialized NetworkConfig leaked auth_token: {json}"
+        );
+        assert!(
+            !json.contains("super-secret-token-2"),
+            "serialized NetworkConfig leaked auth_token: {json}"
+        );
+        assert!(
+            !json.contains("auth_token"),
+            "serialized NetworkConfig leaked auth_token field: {json}"
+        );
+    }
+
+    /// Rejected: the public `/v1/config` response type must never contain a
+    /// token value.
+    #[test]
+    fn test_network_config_public_serialization_contains_no_token() {
+        let config = sample_config_with_tokens();
+        let public = NetworkConfigPublic {
+            id: config.id.clone(),
+            threshold: config.threshold,
+            signature_scheme: config.signature_scheme,
+            witness_count: config.witnesses.len(),
+        };
+
+        let json = serde_json::to_string(&public).unwrap();
+
+        assert!(
+            !json.contains("super-secret-token-1"),
+            "serialized NetworkConfigPublic leaked auth_token: {json}"
+        );
+        assert!(
+            !json.contains("super-secret-token-2"),
+            "serialized NetworkConfigPublic leaked auth_token: {json}"
+        );
+        assert!(
+            !json.contains("auth_token"),
+            "serialized NetworkConfigPublic leaked auth_token field: {json}"
+        );
     }
 }

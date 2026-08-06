@@ -18,3 +18,7 @@ CLAUDE.md
 
 # Local test configs (contain private keys)
 *-single.json
+
+# Node / TypeScript SDK
+node_modules/
+sdk/ts/dist/

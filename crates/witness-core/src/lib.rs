@@ -28,15 +28,18 @@ pub mod types;
 
 // types
 pub use types::{
-    Attestation, FreebirdConfig, FreebirdToken, NetworkConfig, SignRequest, SignResponse,
+    Attestation, AttestationEvent, FreebirdConfig, FreebirdToken, LogInclusionProofResponse,
+    MerkleProofResponse, NetworkConfig, NetworkConfigPublic, SignRequest, SignResponse,
     SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
     WitnessInfo, WitnessSignature,
 };
 
 // crypto
+#[cfg(feature = "keygen")]
+pub use crypto::generate_keypair;
 pub use crypto::{
-    constant_time_eq, decode_public_key, encode_public_key, generate_keypair, hash_content,
-    sign_attestation, verify_signature, verify_signed_attestation,
+    constant_time_eq, decode_public_key, encode_public_key, hash_content, sign_attestation,
+    verify_signature, verify_signed_attestation,
 };
 
 // error
@@ -60,10 +63,12 @@ pub use federation::{
 };
 
 // bls
+#[cfg(feature = "keygen")]
+pub use bls::generate_bls_keypair;
 pub use bls::{
     aggregate_signatures_bls, decode_bls_public_key, decode_bls_secret_key, encode_bls_public_key,
-    encode_bls_secret_key, generate_bls_keypair, sign_attestation_bls,
-    verify_aggregated_signature_bls, verify_signature_bls,
+    encode_bls_secret_key, sign_attestation_bls, verify_aggregated_signature_bls,
+    verify_signature_bls,
 };
 
 // signature scheme

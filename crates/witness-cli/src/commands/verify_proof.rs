@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use witness_core::{NetworkConfig, ProofBundle, ProofVerificationConfig};
 
-use crate::client::WitnessClient;
+use witness_client::WitnessClient;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -20,8 +20,8 @@ pub async fn run(
             .with_context(|| format!("Failed to read bundle file: {}", path))?;
         serde_json::from_str(&content).context("Failed to parse bundle JSON")?
     } else if let Some(hash) = hash {
-        let client = WitnessClient::new(gateway_url);
-        client.get_proof_bundle(&hash).await?
+        let client = WitnessClient::new(gateway_url)?;
+        client.get_bundle(decode_hash(&hash)?).await?
     } else {
         anyhow::bail!("Must provide either --bundle <path> or --hash <hex>");
     };
@@ -30,8 +30,8 @@ pub async fn run(
     let network: NetworkConfig = if let Some(path) = network_config_path {
         load_network_config(&path)?
     } else if online {
-        let client = WitnessClient::new(gateway_url);
-        client.get_network_config().await?
+        let client = WitnessClient::new(gateway_url)?;
+        client.network().await?
     } else {
         anyhow::bail!(
             "Provide --network-config <path> for offline verification, or pass --online to \
@@ -48,7 +48,7 @@ pub async fn run(
         .collect::<Result<Vec<_>>>()?;
 
     if online {
-        let client = WitnessClient::new(gateway_url);
+        let client = WitnessClient::new(gateway_url)?;
         for cross_anchor in &bundle.cross_anchors {
             if peers
                 .iter()
@@ -63,7 +63,7 @@ pub async fn run(
                 .iter()
                 .find(|p| p.id == cross_anchor.witnessing_network);
             match peer_info {
-                Some(peer) => match client.get_network_config_from(&peer.gateway).await {
+                Some(peer) => match client.network_from(&peer.gateway).await {
                     Ok(cfg) => peers.push(cfg),
                     Err(e) => {
                         if output_format == "text" {
@@ -168,4 +168,13 @@ fn load_network_config(path: &str) -> Result<NetworkConfig> {
         .with_context(|| format!("Failed to read network config: {}", path))?;
     serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse network config: {}", path))
+}
+
+fn decode_hash(hash_hex: &str) -> Result<[u8; 32]> {
+    let bytes =
+        hex::decode(hash_hex).context("Invalid hash format: must be hex encoded SHA-256")?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid hash length: must be 64 hex characters (32 bytes)")
+    })?;
+    Ok(arr)
 }

@@ -15,12 +15,12 @@ pub trait WitnessClientTrait: Send + Sync {
 }
 
 #[async_trait]
-impl WitnessClientTrait for crate::witness_client::WitnessClient {
+impl WitnessClientTrait for crate::node_client::NodeClient {
     async fn request_signature(
         &self,
         witness: &WitnessInfo,
         attestation: &Attestation,
     ) -> Result<SignResponse> {
-        crate::witness_client::WitnessClient::request_signature(self, witness, attestation).await
+        crate::node_client::NodeClient::request_signature(self, witness, attestation).await
     }
 }

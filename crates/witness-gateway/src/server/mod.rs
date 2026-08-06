@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::cors::CorsLayer;
-use witness_core::{Attestation, NetworkConfig, SignResponse, WitnessInfo};
+use witness_core::{Attestation, AttestationEvent, NetworkConfig, SignResponse, WitnessInfo};
 
 use crate::admin::{admin_router, AdminState};
 use crate::epoch::epoch_secs;
@@ -35,27 +35,12 @@ mod federation_auth;
 mod routes;
 mod ws;
 
+#[cfg(feature = "openapi")]
+pub mod openapi;
+
 // ============================================================================
 // Public types
 // ============================================================================
-
-/// Public-facing subset of NetworkConfig — excludes internal endpoints, peer URLs, and auth tokens.
-#[derive(serde::Serialize)]
-struct NetworkConfigPublic {
-    id: String,
-    threshold: usize,
-    signature_scheme: witness_core::SignatureScheme,
-    witness_count: usize,
-}
-
-/// Event broadcast to WebSocket clients when an attestation is created.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct AttestationEvent {
-    #[serde(rename = "type")]
-    pub event_type: &'static str,
-    pub hash: String,
-    pub timestamp: u64,
-}
 
 // ============================================================================
 // Focused state structs

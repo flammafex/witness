@@ -1,12 +1,18 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
-use crate::client::WitnessClient;
+use witness_client::{Error, WitnessClient};
 
 pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<()> {
-    let client = WitnessClient::new(gateway_url);
+    let client = WitnessClient::new(gateway_url)?;
 
-    // Get batch anchors for this hash
-    let anchors = client.get_batch_anchors(hash).await?;
+    // Get batch anchors for this hash. The SDK maps an unknown attestation
+    // (404) to `Error::NotFound`; the CLI preserves its historical display
+    // semantics by rendering that as an empty list.
+    let anchors = match client.get_anchors(decode_hash(hash)?).await {
+        Ok(anchors) => anchors,
+        Err(Error::NotFound(_)) => Vec::new(),
+        Err(e) => return Err(e.into()),
+    };
 
     if anchors.is_empty() {
         if output_format == "text" {
@@ -87,4 +93,13 @@ fn format_timestamp(unix_secs: u64) -> String {
     let timestamp = UNIX_EPOCH + Duration::from_secs(unix_secs);
     let datetime = chrono::DateTime::<chrono::Utc>::from(timestamp);
     datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+}
+
+fn decode_hash(hash_hex: &str) -> Result<[u8; 32]> {
+    let bytes =
+        hex::decode(hash_hex).context("Invalid hash format: must be hex encoded SHA-256")?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid hash length: must be 64 hex characters (32 bytes)")
+    })?;
+    Ok(arr)
 }

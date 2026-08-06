@@ -4,16 +4,16 @@
 use anyhow::{Context, Result};
 use witness_core::{verify_log_consistency, verify_signed_tree_head, NetworkConfig};
 
-use crate::client::WitnessClient;
+use witness_client::WitnessClient;
 
 /// Fetch and display the gateway's latest STH.  When `--verify` is set, also
 /// check the threshold signatures against the gateway's network config.
 pub async fn sth(gateway: &str, output: &str, verify: bool) -> Result<()> {
-    let client = WitnessClient::new(gateway);
-    let sth = client.get_latest_sth().await?;
+    let client = WitnessClient::new(gateway)?;
+    let sth = client.sth().await?;
 
     if verify {
-        let config: NetworkConfig = client.get_network_config().await?;
+        let config: NetworkConfig = client.network().await?;
         let count =
             verify_signed_tree_head(&sth, &config).context("STH signature verification failed")?;
         eprintln!(
@@ -44,11 +44,11 @@ pub async fn consistency(
     output: &str,
     verify: bool,
 ) -> Result<()> {
-    let client = WitnessClient::new(gateway);
-    let proof = client.get_log_consistency(first, second).await?;
+    let client = WitnessClient::new(gateway)?;
+    let proof = client.consistency(first, second).await?;
 
     if verify {
-        let config = client.get_network_config().await?;
+        let config = client.network().await?;
         verify_log_consistency(&proof, &config).context("Consistency proof verification failed")?;
         eprintln!(
             "Consistency proof verified: tree[{}] is a prefix of tree[{}]",

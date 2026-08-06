@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use witness_core::FreebirdToken;
 
-use crate::client::WitnessClient;
+use witness_client::WitnessClient;
 
 pub async fn run(
     gateway_url: &str,
@@ -64,8 +64,10 @@ pub async fn run(
         }
     }
 
-    let client = WitnessClient::new(gateway_url);
-    let job = client.create_attestation(&hash, freebird_token).await?;
+    let client = WitnessClient::new(gateway_url)?;
+    let job = client
+        .create_attestation(decode_hash(&hash)?, freebird_token)
+        .await?;
 
     // Output results
     match output_format {
@@ -137,4 +139,13 @@ fn format_timestamp(timestamp: u64) -> String {
         }
         Err(_) => format!("Unix timestamp: {}", timestamp),
     }
+}
+
+fn decode_hash(hash_hex: &str) -> Result<[u8; 32]> {
+    let bytes =
+        hex::decode(hash_hex).context("Invalid hash format: must be hex encoded SHA-256")?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid hash length: must be 64 hex characters (32 bytes)")
+    })?;
+    Ok(arr)
 }

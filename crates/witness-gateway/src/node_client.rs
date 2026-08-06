@@ -3,11 +3,11 @@ use reqwest::Client;
 use std::time::Duration;
 use witness_core::{Attestation, SignRequest, SignResponse, WitnessInfo};
 
-pub struct WitnessClient {
+pub struct NodeClient {
     client: Client,
 }
 
-impl WitnessClient {
+impl NodeClient {
     pub fn new() -> Self {
         Self {
             client: crate::http_client::build_client(true),
@@ -71,7 +71,7 @@ impl WitnessClient {
     }
 }
 
-impl Default for WitnessClient {
+impl Default for NodeClient {
     fn default() -> Self {
         Self::new()
     }

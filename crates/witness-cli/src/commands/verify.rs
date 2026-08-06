@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use witness_core::SignedAttestation;
 
-use crate::client::WitnessClient;
+use witness_client::WitnessClient;
 
 pub async fn run(gateway_url: &str, file_path: &str, output_format: &str) -> Result<()> {
     // Load attestation from file
@@ -19,8 +19,8 @@ pub async fn run(gateway_url: &str, file_path: &str, output_format: &str) -> Res
     }
 
     // Fetch network config (contains public keys) for local verification
-    let client = WitnessClient::new(gateway_url);
-    let config = client.get_network_config().await?;
+    let client = WitnessClient::new(gateway_url)?;
+    let config = client.network().await?;
 
     // Verify locally using witness-core cryptographic verification
     let result = witness_core::verify_signed_attestation(&attestation, &config);

@@ -1,22 +1,18 @@
 use anyhow::{Context, Result};
 
-use crate::client::WitnessClient;
+use witness_client::WitnessClient;
 
 pub async fn run(gateway_url: &str, hash: &str, output_format: &str) -> Result<()> {
     // Validate hash
-    hex::decode(hash).context("Invalid hash format: must be hex encoded SHA-256")?;
-
-    if hash.len() != 64 {
-        anyhow::bail!("Invalid hash length: must be 64 hex characters (32 bytes)");
-    }
+    let hash_bytes = decode_hash(hash)?;
 
     // Get durable attestation job status.
     if output_format == "text" {
         println!("Looking up attestation job...");
     }
 
-    let client = WitnessClient::new(gateway_url);
-    let job = client.get_attestation(hash).await?;
+    let client = WitnessClient::new(gateway_url)?;
+    let job = client.get_attestation(hash_bytes).await?;
 
     // Output results
     match output_format {
@@ -74,4 +70,13 @@ fn format_timestamp(timestamp: u64) -> String {
         }
         Err(_) => format!("Unix timestamp: {}", timestamp),
     }
+}
+
+fn decode_hash(hash_hex: &str) -> Result<[u8; 32]> {
+    let bytes =
+        hex::decode(hash_hex).context("Invalid hash format: must be hex encoded SHA-256")?;
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+        anyhow::anyhow!("Invalid hash length: must be 64 hex characters (32 bytes)")
+    })?;
+    Ok(arr)
 }
