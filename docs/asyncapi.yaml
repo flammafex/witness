@@ -1,0 +1,104 @@
+asyncapi: 2.6.0
+info:
+  title: Witness Gateway WebSocket Events
+  version: 0.8.0
+  description: |-
+    Push event stream for the Witness quorum timestamper. Clients connect to
+    `/ws/events` and receive an `AttestationEvent` whenever a new attestation
+    job is created.
+
+    This is the AsyncAPI companion to the OpenAPI document in `openapi.yaml`
+    (OpenAPI does not model WebSocket protocols). The wire encoding follows
+    docs/sdk-enhancement-spec.md §3.4 (lowercase hex strings).
+
+servers:
+  production:
+    url: wss://gateway.example.com/ws/events
+    protocol: wss
+    description: Production gateway (TLS terminated by a reverse proxy)
+
+channels:
+  /ws/events:
+    description: |-
+      WebSocket endpoint for attestation events. On connect the server may
+      challenge the client with an auth handshake (see `auth_required` below);
+      after authentication (or immediately when no token is configured) the
+      server streams `AttestationEvent` messages.
+    subscribe:
+      operationId: subscribeEvents
+      summary: Subscribe to attestation events
+      message:
+        $ref: '#/components/messages/AttestationEvent'
+
+components:
+  messages:
+    auth_required:
+      name: auth_required
+      title: Auth challenge
+      summary: Server challenges the client to authenticate
+      description: |-
+        If a WebSocket auth token is configured, the server sends this as its
+        first message. The client MUST reply with a JSON object
+        `{ "token": "<token>" }` within 5 seconds. If the token is absent,
+        wrong, or the reply is not received within the 5 second window, the
+        server closes the connection with close code **4001** (Unauthorized).
+      contentType: application/json
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: auth_required
+    auth_reply:
+      name: auth_reply
+      title: Client auth reply
+      summary: Client authenticates in response to the challenge
+      description: |-
+        Client-to-server message sent within 5 seconds of the `auth_required`
+        challenge. A missing, malformed, or incorrect token results in close
+        code **4001**.
+      contentType: application/json
+      payload:
+        type: object
+        required: [token]
+        properties:
+          token:
+            type: string
+            description: WebSocket auth token (never logged)
+    AttestationEvent:
+      name: AttestationEvent
+      title: Attestation event
+      summary: A new attestation job was created
+      description: |-
+        Broadcast when a new attestation job is created. `hash` is the
+        lowercase hex-encoded SHA-256 hash (64 chars, no `0x` prefix);
+        `timestamp` is Unix seconds.
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, hash, timestamp]
+        properties:
+          type:
+            type: string
+            description: Event type (currently always "attestation")
+            example: attestation
+          hash:
+            type: string
+            description: Lowercase hex-encoded SHA-256 hash (64 chars)
+            pattern: '^[0-9a-f]{64}$'
+            example: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+          timestamp:
+            type: integer
+            format: int64
+            description: Unix timestamp in seconds when the attestation was created
+            minimum: 0
+
+  securitySchemes:
+    wsAuth:
+      type: userPassword
+      description: |-
+        Optional first-message token handshake. When configured, the server
+        sends `{ "type": "auth_required" }` and the client must reply
+        `{ "token": "<token>" }` within 5 seconds; failure closes with code
+        4001.

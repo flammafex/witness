@@ -14,8 +14,20 @@ categories = ["cryptography", "web-programming::http-server"]
 name = "witness-gateway"
 path = "src/main.rs"
 
+[[bin]]
+name = "gen_openapi"
+path = "src/bin/gen_openapi.rs"
+required-features = ["openapi"]
+
+[features]
+default = []
+# OpenAPI documentation generation. Default off so the normal build does not
+# pull in utoipa. Enables witness-core's `openapi` feature (ToSchema derives).
+openapi = ["witness-core/openapi", "dep:utoipa"]
+
 [dependencies]
 witness-core.workspace = true
+utoipa = { workspace = true, optional = true }
 ethers = { version = "2.0", features = ["rustls"] }
 serde.workspace = true
 serde_json.workspace = true

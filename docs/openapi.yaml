@@ -1,0 +1,967 @@
+openapi: 3.1.0
+info:
+  title: Witness Gateway API
+  description: |-
+    Client-facing HTTP API for the Witness quorum timestamper.
+
+    All hashes and signatures are lowercase hex strings (no `0x` prefix). `AttestationSignatures` is an untagged union: a `signatures` array means Ed25519 multi-sig; both `signature` and `signers` means BLS aggregated. See docs/sdk-enhancement-spec.md §3.4–3.5 for the normative encoding rules.
+
+    Operator-facing routes (`/v1/federation/anchor`, `/metrics`, `/admin/*`) are intentionally not documented here. The WebSocket event stream is documented in docs/asyncapi.yaml.
+  contact:
+    name: The Carpocratian Church of Commonaltity and Equality, Inc.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  version: 0.8.0
+paths:
+  /health:
+    get:
+      tags:
+      - super::routes
+      operationId: health_handler
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /v1/anchors/{hash}:
+    get:
+      tags:
+      - super::routes
+      operationId: get_anchors_handler
+      parameters:
+      - name: hash
+        in: path
+        description: Hex-encoded SHA-256 hash (64 lowercase hex chars)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: External anchor proofs (empty array if the attestation is known but not yet batched)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExternalAnchorProof'
+        '404':
+          description: Unknown attestation
+  /v1/attestations:
+    post:
+      tags:
+      - super::routes
+      operationId: create_attestation_handler
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttestationRequest'
+        required: true
+      responses:
+        '200':
+          description: Attestation job reached a terminal state (confirmed or failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationJobResponse'
+        '202':
+          description: Attestation job is pending or retryable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationJobResponse'
+        '429':
+          description: Rate limited
+  /v1/attestations/{hash}:
+    get:
+      tags:
+      - super::routes
+      operationId: get_attestation_handler
+      parameters:
+      - name: hash
+        in: path
+        description: Hex-encoded SHA-256 hash (64 lowercase hex chars)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Attestation job for the hash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationJobResponse'
+        '404':
+          description: No attestation job exists for this hash
+  /v1/bundle/{hash}:
+    get:
+      tags:
+      - super::routes
+      summary: Return a self-contained [`ProofBundle`] for a hash.
+      description: |-
+        The bundle includes the home network's threshold-signed attestation,
+        merkle inclusion proof (if batched), peer cross-anchors, and external
+        anchor proofs.  Clients can verify the bundle offline against the
+        network configurations using [`witness_core::verify_proof_bundle`].
+      operationId: get_proof_bundle_handler
+      parameters:
+      - name: hash
+        in: path
+        description: Hex-encoded SHA-256 hash (64 lowercase hex chars)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Self-contained proof bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProofBundle'
+        '404':
+          description: Attestation not found
+  /v1/config:
+    get:
+      tags:
+      - super::routes
+      operationId: config_handler
+      responses:
+        '200':
+          description: Public network configuration (informational only; not a trust anchor)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkConfigPublic'
+  /v1/log/consistency:
+    get:
+      tags:
+      - super::routes
+      summary: |-
+        RFC 9162 §4.10 GetConsistency: prove that the log of size `first` is a
+        prefix of the log of size `second`.  Both endpoints are inclusive — they
+        must each correspond to a previously published STH.
+      operationId: get_consistency_handler
+      parameters:
+      - name: first
+        in: query
+        description: Old tree size (>= 1)
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: second
+        in: query
+        description: New tree size (>= first)
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Consistency proof linking the two signed tree heads
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogConsistencyProof'
+        '404':
+          description: No STH at one of the requested tree sizes
+  /v1/log/proof:
+    get:
+      tags:
+      - super::routes
+      summary: |-
+        RFC 9162 §4.11 GetProofByHash: inclusion proof for `hash` against the
+        STH at `tree_size`.
+      operationId: get_log_proof_handler
+      parameters:
+      - name: hash
+        in: query
+        description: Hex-encoded SHA-256 hash (64 lowercase hex chars)
+        required: true
+        schema:
+          type: string
+      - name: tree_size
+        in: query
+        description: Tree size to prove inclusion against
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Log inclusion proof
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogInclusionProofResponse'
+        '404':
+          description: Hash not in the log at this tree size
+  /v1/log/sth:
+    get:
+      tags:
+      - super::routes
+      summary: |-
+        Latest signed tree head for the gateway's home network.  Returns 404 if
+        no batches have closed yet (the log is empty).
+      operationId: get_latest_sth_handler
+      responses:
+        '200':
+          description: Latest signed tree head
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedTreeHead'
+        '404':
+          description: Log is empty (no batches closed yet)
+  /v1/log/sth/{tree_size}:
+    get:
+      tags:
+      - super::routes
+      summary: |-
+        Look up a historical STH at a specific tree size.  Auditors use this to
+        pin a known-good snapshot and walk forward via consistency proofs.
+      operationId: get_sth_at_size_handler
+      parameters:
+      - name: tree_size
+        in: path
+        description: Tree size to fetch the signed tree head for
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Signed tree head at the given tree size
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignedTreeHead'
+        '404':
+          description: No STH published at this tree size
+  /v1/network:
+    get:
+      tags:
+      - super::routes
+      summary: |-
+        Return the full [`NetworkConfig`] (witnesses, threshold, signature scheme,
+        federation peers, external anchor providers) for offline verification of
+        proof bundles.  Auth tokens are omitted via `#[serde(skip_serializing)]`
+        on the relevant fields.
+      operationId: network_config_handler
+      responses:
+        '200':
+          description: Full network configuration with witness public keys (auth tokens stripped server-side)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkConfig'
+  /v1/proof/{hash}:
+    get:
+      tags:
+      - super::routes
+      summary: Response for merkle inclusion proof.
+      operationId: get_proof_handler
+      parameters:
+      - name: hash
+        in: path
+        description: Hex-encoded SHA-256 hash (64 lowercase hex chars)
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Merkle inclusion proof
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MerkleProofResponse'
+        '404':
+          description: Attestation not confirmed or not yet batched
+  /v1/verify:
+    post:
+      tags:
+      - super::routes
+      operationId: verify_handler
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+        required: true
+      responses:
+        '200':
+          description: Gateway's verification opinion (non-authoritative; prefer local verification)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+  /ws/events:
+    get:
+      tags:
+      - super::ws
+      summary: WebSocket endpoint for attestation events.
+      description: |-
+        Upgrades to a WebSocket connection. The full protocol (auth handshake,
+        5s window, close code 4001, `AttestationEvent` schema) is documented in
+        `docs/asyncapi.yaml`.
+      operationId: ws_events_handler
+      responses:
+        '101':
+          description: 'Switching Protocols: WebSocket upgrade. See docs/asyncapi.yaml for the event protocol.'
+components:
+  schemas:
+    AnchorProviderConfig:
+      allOf:
+      - description: Provider-specific configuration (URL, credentials, etc.)
+      - type: object
+        required:
+        - type
+        properties:
+          enabled:
+            type: boolean
+            description: Whether this provider is enabled
+          priority:
+            type: integer
+            format: int32
+            description: Priority (lower = higher priority, providers tried in order)
+            minimum: 0
+          type:
+            $ref: '#/components/schemas/AnchorProviderType'
+            description: Type of anchor provider
+      description: Configuration for an external anchor provider
+    AnchorProviderType:
+      type: string
+      description: External anchor provider types
+      enum:
+      - internet_archive
+      - trillian
+      - dns_txt
+      - blockchain
+    Attestation:
+      type: object
+      description: 'Core attestation: what gets signed by witnesses'
+      required:
+      - hash
+      - timestamp
+      - network_id
+      - sequence
+      properties:
+        hash:
+          type: string
+          description: SHA-256 hash of the content being timestamped
+        network_id:
+          type: string
+          description: Which Witness network this attestation is from
+        sequence:
+          type: integer
+          format: int64
+          description: Monotonic sequence number for ordering
+          minimum: 0
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds
+          minimum: 0
+    AttestationBatch:
+      type: object
+      description: A batch of attestations with their merkle root
+      required:
+      - id
+      - network_id
+      - merkle_root
+      - period_start
+      - period_end
+      - attestation_count
+      properties:
+        attestation_count:
+          type: integer
+          format: int64
+          description: Number of attestations in this batch
+          minimum: 0
+        id:
+          type: integer
+          format: int64
+          description: Unique batch ID
+          minimum: 0
+        merkle_root:
+          type: string
+          description: Merkle root of all attestations in this batch
+        network_id:
+          type: string
+          description: Network that created this batch
+        period_end:
+          type: integer
+          format: int64
+          description: End of batch period (Unix seconds)
+          minimum: 0
+        period_start:
+          type: integer
+          format: int64
+          description: Start of batch period (Unix seconds)
+          minimum: 0
+    AttestationJobResponse:
+      type: object
+      description: |-
+        Stable snapshot returned when creating or reading an attestation job.
+
+        The canonical tuple is always present. `signed_attestation` is present only
+        after the job has reached `confirmed`; pending and failed jobs never expose
+        an unsigned `SignedAttestation` placeholder.
+      required:
+      - attestation
+      - status
+      - attempts
+      properties:
+        attempts:
+          type: integer
+          format: int32
+          description: Number of leases issued for this job.
+          minimum: 0
+        attestation:
+          $ref: '#/components/schemas/Attestation'
+        last_error:
+          type:
+          - string
+          - 'null'
+        next_attempt_at:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Unix timestamp at which a pending/retryable job is next eligible.
+          minimum: 0
+        signed_attestation:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/SignedAttestation'
+        status:
+          $ref: '#/components/schemas/AttestationJobStatus'
+    AttestationJobStatus:
+      type: string
+      description: Durable lifecycle state of an attestation job.
+      enum:
+      - pending
+      - retryable
+      - confirmed
+      - failed
+    AttestationSignatures:
+      oneOf:
+      - type: object
+        description: Ed25519 multi-signature (one signature per witness)
+        required:
+        - signatures
+        properties:
+          signatures:
+            type: array
+            items:
+              $ref: '#/components/schemas/WitnessSignature'
+      - type: object
+        description: BLS aggregated signature (single signature from multiple witnesses)
+        required:
+        - signature
+        - signers
+        properties:
+          signature:
+            type: string
+            description: Aggregated BLS signature
+          signers:
+            type: array
+            items:
+              type: string
+            description: List of witness IDs that participated
+      description: Signatures on an attestation (multi-sig or aggregated)
+    BatchInclusion:
+      type: object
+      description: Inclusion of an attestation in a batch's merkle tree.
+      required:
+      - batch
+      - merkle_proof
+      properties:
+        batch:
+          $ref: '#/components/schemas/AttestationBatch'
+        merkle_proof:
+          $ref: '#/components/schemas/MerkleProof'
+    CreateAttestationRequest:
+      type: object
+      description: Request to create or retrieve the canonical attestation job for a hash.
+      required:
+      - hash
+      properties:
+        freebird_token:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/FreebirdToken'
+            description: Optional Freebird token for Sybil resistance.
+        hash:
+          type: string
+          description: SHA-256 hash to attest (hex encoded).
+    CrossAnchor:
+      type: object
+      description: |-
+        Cross-anchor attestation from a peer network.
+
+        The peer network signs an [`Attestation`](crate::Attestation) whose `hash`
+        is the cross-anchored batch's merkle root and whose `network_id` is the
+        peer's own network ID.  This makes the cross-anchor a self-contained,
+        independently verifiable threshold signature — clients can verify it
+        against the peer's published [`NetworkConfig`] without trusting the
+        originating gateway.
+      required:
+      - batch
+      - witnessing_network
+      - witness_attestation
+      - timestamp
+      properties:
+        batch:
+          $ref: '#/components/schemas/AttestationBatch'
+          description: The batch being witnessed
+        timestamp:
+          type: integer
+          format: int64
+          description: When this cross-anchor was created (Unix seconds)
+          minimum: 0
+        witness_attestation:
+          $ref: '#/components/schemas/SignedAttestation'
+          description: Signed attestation from the peer network over `batch.merkle_root`
+        witnessing_network:
+          type: string
+          description: ID of the network that witnessed this batch
+    ExternalAnchorProof:
+      type: object
+      description: Proof that data was anchored to an external service
+      required:
+      - provider
+      - timestamp
+      - proof
+      properties:
+        anchored_data:
+          type:
+          - array
+          - 'null'
+          items:
+            type: integer
+            format: int32
+            minimum: 0
+          description: 'Optional: the actual data that was anchored (for verification)'
+        proof:
+          description: Provider-specific proof data (URL, transaction hash, etc.)
+        provider:
+          $ref: '#/components/schemas/AnchorProviderType'
+          description: Type of anchor provider
+        timestamp:
+          type: integer
+          format: int64
+          description: When this anchor was created
+          minimum: 0
+    ExternalAnchorsConfig:
+      type: object
+      description: Configuration for external anchoring
+      properties:
+        anchor_period:
+          type: integer
+          format: int64
+          description: How often to anchor batches (seconds)
+          minimum: 0
+        enabled:
+          type: boolean
+          description: Whether external anchoring is enabled
+        minimum_required:
+          type: integer
+          description: Minimum number of successful anchors required
+          minimum: 0
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnchorProviderConfig'
+          description: List of anchor providers
+    FederationConfig:
+      type: object
+      description: Configuration for federation
+      properties:
+        batch_period:
+          type: integer
+          format: int64
+          description: How often to close batches (seconds)
+          minimum: 0
+        cross_anchor_threshold:
+          type: integer
+          description: Minimum number of peer networks that must cross-anchor
+          minimum: 0
+        enabled:
+          type: boolean
+          description: Whether federation is enabled
+        peer_networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeerNetworkInfo'
+          description: Peer networks to federate with
+    FreebirdToken:
+      type: object
+      description: Freebird token for anonymous authorization
+      required:
+      - token_b64
+      properties:
+        token_b64:
+          type: string
+          description: Base64url-encoded Freebird redemption token.
+    HealthResponse:
+      type: object
+      description: Response body for `GET /health`.
+      required:
+      - status
+      properties:
+        status:
+          type: string
+    LogConsistencyProof:
+      type: object
+      description: Consistency proof linking two signed tree heads of the same log.
+      required:
+      - old_sth
+      - new_sth
+      - hashes
+      properties:
+        hashes:
+          type: array
+          items:
+            type: string
+          description: Hashes from RFC 9162 §2.1.4.1 PROOF.
+        new_sth:
+          $ref: '#/components/schemas/SignedTreeHead'
+        old_sth:
+          $ref: '#/components/schemas/SignedTreeHead'
+    LogInclusionProofResponse:
+      type: object
+      description: RFC 9162 §4.11 inclusion proof response (`GET /v1/log/proof`).
+      required:
+      - leaf_index
+      - tree_size
+      - audit_path
+      - sth
+      properties:
+        audit_path:
+          type: array
+          items:
+            type: string
+        leaf_index:
+          type: integer
+          format: int64
+          minimum: 0
+        sth:
+          $ref: '#/components/schemas/SignedTreeHead'
+        tree_size:
+          type: integer
+          format: int64
+          minimum: 0
+    MerkleProof:
+      type: object
+      description: |-
+        Inclusion proof for a single leaf at `leaf_index` in a tree of size
+        `tree_size`.  The siblings are listed bottom-up (leaf level first).
+      required:
+      - leaf
+      - siblings
+      - leaf_index
+      - tree_size
+      - root
+      properties:
+        leaf:
+          type: string
+          description: |-
+            The raw leaf bytes (pre-hash).  `hash_leaf(leaf)` is the value at
+            position `leaf_index` in the tree.
+        leaf_index:
+          type: integer
+          format: int64
+          description: |-
+            0-based position of `leaf` in the log.  Renamed from `index` so
+            callers are forced to update for the position-aware verifier.
+          minimum: 0
+        root:
+          type: string
+          description: |-
+            Root hash of the tree at `tree_size`.  Carried for convenience; the
+            verifier may also pass an externally trusted root and ignore this.
+        siblings:
+          type: array
+          items:
+            type: string
+          description: |-
+            Audit path: sibling hashes from leaf level upward to (but not
+            including) the root.
+        tree_size:
+          type: integer
+          format: int64
+          description: |-
+            Total number of leaves in the tree this proof was generated against.
+            Required to walk the unbalanced-split tree shape.
+          minimum: 0
+    MerkleProofResponse:
+      type: object
+      description: Response for a Merkle inclusion proof (`GET /v1/proof/:hash`).
+      required:
+      - hash
+      - proof
+      - index
+      - merkle_root
+      - batch_id
+      properties:
+        batch_id:
+          type: integer
+          format: int64
+          minimum: 0
+        hash:
+          type: string
+        index:
+          type: integer
+          minimum: 0
+        merkle_root:
+          type: string
+        proof:
+          type: array
+          items:
+            type: string
+    NetworkConfig:
+      type: object
+      description: Network configuration
+      required:
+      - id
+      - witnesses
+      - threshold
+      properties:
+        external_anchors:
+          $ref: '#/components/schemas/ExternalAnchorsConfig'
+          description: External anchors configuration (Phase 3)
+        federation:
+          $ref: '#/components/schemas/FederationConfig'
+          description: Federation configuration (Phase 2)
+        federation_peers:
+          type: array
+          items:
+            type: string
+          description: 'Deprecated: Use federation.peer_networks instead'
+        id:
+          type: string
+          description: Network identifier
+        signature_scheme:
+          $ref: '#/components/schemas/SignatureScheme'
+          description: Signature scheme (ed25519 or bls)
+        threshold:
+          type: integer
+          description: Minimum number of signatures required
+          minimum: 0
+        witnesses:
+          type: array
+          items:
+            $ref: '#/components/schemas/WitnessInfo'
+          description: List of witnesses in this network
+    NetworkConfigPublic:
+      type: object
+      description: |-
+        Public-facing subset of [`NetworkConfig`] — excludes internal endpoints,
+        peer URLs, and auth tokens. Returned by `GET /v1/config`.
+      required:
+      - id
+      - threshold
+      - signature_scheme
+      - witness_count
+      properties:
+        id:
+          type: string
+        signature_scheme:
+          $ref: '#/components/schemas/SignatureScheme'
+        threshold:
+          type: integer
+          minimum: 0
+        witness_count:
+          type: integer
+          minimum: 0
+    PeerNetworkInfo:
+      type: object
+      description: Information about a peer network
+      required:
+      - id
+      - gateway
+      properties:
+        gateway:
+          type: string
+          description: Gateway URL for this peer network
+        id:
+          type: string
+          description: Peer network ID
+        min_witnesses:
+          type: integer
+          description: Minimum number of witnesses required from this peer
+          minimum: 0
+    ProofBundle:
+      type: object
+      description: |-
+        Self-contained bundle proving the full chain of trust for a hash.
+
+        All four layers are independently verifiable, so a client can confirm:
+        - **Threshold signature** — the home network's witnesses signed the attestation.
+        - **Batch inclusion** — the attestation was committed to a merkle root.
+        - **Cross-anchors** — peer networks signed that root.
+        - **External anchors** — the root was committed to external systems
+          (Internet Archive, Trillian, DNS, blockchain).
+      required:
+      - signed_attestation
+      properties:
+        batch_inclusion:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/BatchInclusion'
+            description: Merkle inclusion proof, present once the attestation has been batched
+        cross_anchors:
+          type: array
+          items:
+            $ref: '#/components/schemas/CrossAnchor'
+          description: Cross-anchors from peer networks
+        external_anchors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalAnchorProof'
+          description: External anchor proofs (Internet Archive, Trillian, DNS, blockchain)
+        signed_attestation:
+          $ref: '#/components/schemas/SignedAttestation'
+          description: Threshold-signed attestation from the home network
+    SignatureScheme:
+      type: string
+      description: Signature scheme used by the network
+      enum:
+      - ed25519
+      - bls
+    SignedAttestation:
+      type: object
+      description: Complete signed attestation with all witness signatures
+      required:
+      - attestation
+      - signatures
+      properties:
+        attestation:
+          $ref: '#/components/schemas/Attestation'
+        signatures:
+          $ref: '#/components/schemas/AttestationSignatures'
+          description: Signatures (multi-sig or aggregated)
+    SignedTreeHead:
+      type: object
+      description: |-
+        A [`TreeHead`] together with witness threshold signatures over its
+        digest.  The same `AttestationSignatures` machinery used for individual
+        timestamps is reused; verification piggybacks on
+        [`crate::verify_signed_attestation`].
+      required:
+      - tree_head
+      - signed_attestation
+      properties:
+        signed_attestation:
+          $ref: '#/components/schemas/SignedAttestation'
+        tree_head:
+          $ref: '#/components/schemas/TreeHead'
+    TreeHead:
+      type: object
+      description: |-
+        Plaintext fields of a tree head.  The signing digest commits to all of
+        these so a verifier given a [`SignedTreeHead`] can recompute it.
+      required:
+      - network_id
+      - tree_size
+      - timestamp
+      - root_hash
+      properties:
+        network_id:
+          type: string
+          description: Network this STH belongs to.
+        root_hash:
+          type: string
+          description: Merkle root of the log at `tree_size`.
+        timestamp:
+          type: integer
+          format: int64
+          description: When this STH was issued (Unix seconds).
+          minimum: 0
+        tree_size:
+          type: integer
+          format: int64
+          description: Number of leaves in the log.
+          minimum: 0
+    VerifyRequest:
+      type: object
+      description: Request to verify an attestation
+      required:
+      - attestation
+      properties:
+        attestation:
+          $ref: '#/components/schemas/SignedAttestation'
+    VerifyResponse:
+      type: object
+      description: Response from verification
+      required:
+      - valid
+      - verified_signatures
+      - required_signatures
+      - message
+      properties:
+        message:
+          type: string
+        required_signatures:
+          type: integer
+          minimum: 0
+        valid:
+          type: boolean
+        verified_signatures:
+          type: integer
+          minimum: 0
+    WitnessInfo:
+      type: object
+      description: Information about a witness node
+      required:
+      - id
+      - pubkey
+      - endpoint
+      properties:
+        endpoint:
+          type: string
+          description: HTTP endpoint for this witness
+        id:
+          type: string
+          description: Unique identifier for this witness
+        pubkey:
+          type: string
+          description: Ed25519 public key (hex encoded)
+    WitnessSignature:
+      type: object
+      description: A single witness's signature on an attestation
+      required:
+      - witness_id
+      - signature
+      properties:
+        signature:
+          type: string
+          description: Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
+        witness_id:
+          type: string
+          description: ID of the witness that signed
+tags:
+- name: health
+  description: Liveness
+- name: config
+  description: Network configuration
+- name: attestations
+  description: Attestation lifecycle
+- name: verify
+  description: Gateway verification opinion
+- name: proofs
+  description: Merkle / proof bundle retrieval
+- name: anchors
+  description: External anchor proofs
+- name: log
+  description: RFC 9162 transparency log
+- name: events
+  description: WebSocket event stream (see docs/asyncapi.yaml)

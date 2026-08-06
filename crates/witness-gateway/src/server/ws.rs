@@ -13,6 +13,18 @@ use tokio::sync::broadcast;
 
 use super::{AttestationEvent, CoreState};
 
+/// WebSocket endpoint for attestation events.
+///
+/// Upgrades to a WebSocket connection. The full protocol (auth handshake,
+/// 5s window, close code 4001, `AttestationEvent` schema) is documented in
+/// `docs/asyncapi.yaml`.
+#[cfg_attr(feature = "openapi", utoipa::path(
+    get,
+    path = "/ws/events",
+    responses(
+        (status = 101, description = "Switching Protocols: WebSocket upgrade. See docs/asyncapi.yaml for the event protocol.")
+    )
+))]
 pub(super) async fn ws_events_handler(
     ws: WebSocketUpgrade,
     State(state): State<CoreState>,
