@@ -10,14 +10,28 @@ homepage.workspace = true
 keywords = ["timestamp", "cryptography", "threshold", "signatures", "bls"]
 categories = ["cryptography", "data-structures"]
 
+[features]
+default = ["keygen"]
+# Key generation (Ed25519 + BLS) uses `OsRng`, which pulls in `getrandom`.
+# Verification never touches `OsRng`, so the WASM build (`witness-core-wasm`)
+# disables this feature to avoid the `getrandom` wasm32-unknown-unknown
+# limitation. Disabling it removes `generate_keypair` / `generate_bls_keypair`.
+keygen = ["dep:rand"]
+# OpenAPI schema generation (adds `utoipa::ToSchema` derives to the wire types).
+# Enabled by `witness-gateway`'s `openapi` feature; default off so the normal
+# build does not pull in utoipa.
+openapi = ["dep:utoipa"]
+
 [dependencies]
 serde.workspace = true
+utoipa = { workspace = true, optional = true }
 serde_json.workspace = true
+schemars.workspace = true
 ed25519-dalek.workspace = true
 blst.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-rand.workspace = true
+rand = { workspace = true, optional = true }
 zeroize = { workspace = true }
 subtle = { workspace = true }

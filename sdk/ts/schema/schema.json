@@ -1,0 +1,1251 @@
+{
+  "title": "WitnessWireTypes",
+  "anyOf": [
+    {
+      "$ref": "#/definitions/AnchorProviderConfig"
+    },
+    {
+      "$ref": "#/definitions/AnchorProviderType"
+    },
+    {
+      "$ref": "#/definitions/Attestation"
+    },
+    {
+      "$ref": "#/definitions/AttestationBatch"
+    },
+    {
+      "$ref": "#/definitions/AttestationEvent"
+    },
+    {
+      "$ref": "#/definitions/AttestationJobResponse"
+    },
+    {
+      "$ref": "#/definitions/AttestationJobStatus"
+    },
+    {
+      "$ref": "#/definitions/AttestationSignatures"
+    },
+    {
+      "$ref": "#/definitions/BatchInclusion"
+    },
+    {
+      "$ref": "#/definitions/CreateAttestationRequest"
+    },
+    {
+      "$ref": "#/definitions/CrossAnchor"
+    },
+    {
+      "$ref": "#/definitions/ExternalAnchorProof"
+    },
+    {
+      "$ref": "#/definitions/ExternalAnchorsConfig"
+    },
+    {
+      "$ref": "#/definitions/FederationConfig"
+    },
+    {
+      "$ref": "#/definitions/FreebirdToken"
+    },
+    {
+      "$ref": "#/definitions/LogConsistencyProof"
+    },
+    {
+      "$ref": "#/definitions/LogInclusionProofResponse"
+    },
+    {
+      "$ref": "#/definitions/MerkleProof"
+    },
+    {
+      "$ref": "#/definitions/MerkleProofResponse"
+    },
+    {
+      "$ref": "#/definitions/NetworkConfig"
+    },
+    {
+      "$ref": "#/definitions/NetworkConfigPublic"
+    },
+    {
+      "$ref": "#/definitions/PeerNetworkInfo"
+    },
+    {
+      "$ref": "#/definitions/ProofBundle"
+    },
+    {
+      "$ref": "#/definitions/ProofBundleVerification"
+    },
+    {
+      "$ref": "#/definitions/ProofVerificationConfig"
+    },
+    {
+      "$ref": "#/definitions/SignatureScheme"
+    },
+    {
+      "$ref": "#/definitions/SignedAttestation"
+    },
+    {
+      "$ref": "#/definitions/SignedTreeHead"
+    },
+    {
+      "$ref": "#/definitions/TimestampRequest"
+    },
+    {
+      "$ref": "#/definitions/TimestampResponse"
+    },
+    {
+      "$ref": "#/definitions/TreeHead"
+    },
+    {
+      "$ref": "#/definitions/VerificationLevel"
+    },
+    {
+      "$ref": "#/definitions/VerifyRequest"
+    },
+    {
+      "$ref": "#/definitions/VerifyResponse"
+    },
+    {
+      "$ref": "#/definitions/WitnessInfo"
+    },
+    {
+      "$ref": "#/definitions/WitnessSignature"
+    }
+  ],
+  "definitions": {
+    "AnchorProviderConfig": {
+      "description": "Configuration for an external anchor provider",
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "enabled": {
+          "description": "Whether this provider is enabled",
+          "default": true,
+          "type": "boolean"
+        },
+        "priority": {
+          "description": "Priority (lower = higher priority, providers tried in order)",
+          "default": 100,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "type": {
+          "description": "Type of anchor provider",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AnchorProviderType"
+            }
+          ]
+        }
+      }
+    },
+    "AnchorProviderType": {
+      "description": "External anchor provider types",
+      "oneOf": [
+        {
+          "description": "Internet Archive (archive.org)",
+          "type": "string",
+          "enum": [
+            "internet_archive"
+          ]
+        },
+        {
+          "description": "Trillian/Tessera transparency log",
+          "type": "string",
+          "enum": [
+            "trillian"
+          ]
+        },
+        {
+          "description": "DNS TXT record",
+          "type": "string",
+          "enum": [
+            "dns_txt"
+          ]
+        },
+        {
+          "description": "Blockchain (various chains)",
+          "type": "string",
+          "enum": [
+            "blockchain"
+          ]
+        }
+      ]
+    },
+    "Attestation": {
+      "title": "Attestation",
+      "description": "Core attestation: what gets signed by witnesses",
+      "type": "object",
+      "required": [
+        "hash",
+        "network_id",
+        "sequence",
+        "timestamp"
+      ],
+      "properties": {
+        "hash": {
+          "description": "SHA-256 hash of the content being timestamped",
+          "type": "string"
+        },
+        "network_id": {
+          "description": "Which Witness network this attestation is from",
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Monotonic sequence number for ordering",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "timestamp": {
+          "description": "Unix timestamp in seconds",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AttestationBatch": {
+      "title": "AttestationBatch",
+      "description": "A batch of attestations with their merkle root",
+      "type": "object",
+      "required": [
+        "attestation_count",
+        "id",
+        "merkle_root",
+        "network_id",
+        "period_end",
+        "period_start"
+      ],
+      "properties": {
+        "attestation_count": {
+          "description": "Number of attestations in this batch",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "id": {
+          "description": "Unique batch ID",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "merkle_root": {
+          "description": "Merkle root of all attestations in this batch",
+          "type": "string"
+        },
+        "network_id": {
+          "description": "Network that created this batch",
+          "type": "string"
+        },
+        "period_end": {
+          "description": "End of batch period (Unix seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "period_start": {
+          "description": "Start of batch period (Unix seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AttestationEvent": {
+      "title": "AttestationEvent",
+      "description": "Event broadcast to WebSocket clients when an attestation is created.",
+      "type": "object",
+      "required": [
+        "hash",
+        "timestamp",
+        "type"
+      ],
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
+    "AttestationJobResponse": {
+      "title": "AttestationJobResponse",
+      "description": "Stable snapshot returned when creating or reading an attestation job.\n\nThe canonical tuple is always present. `signed_attestation` is present only after the job has reached `confirmed`; pending and failed jobs never expose an unsigned `SignedAttestation` placeholder.",
+      "type": "object",
+      "required": [
+        "attempts",
+        "attestation",
+        "status"
+      ],
+      "properties": {
+        "attempts": {
+          "description": "Number of leases issued for this job.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "attestation": {
+          "$ref": "#/definitions/Attestation"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_attempt_at": {
+          "description": "Unix timestamp at which a pending/retryable job is next eligible.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "signed_attestation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SignedAttestation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/AttestationJobStatus"
+        }
+      }
+    },
+    "AttestationJobStatus": {
+      "title": "AttestationJobStatus",
+      "description": "Durable lifecycle state of an attestation job.",
+      "type": "string",
+      "enum": [
+        "pending",
+        "retryable",
+        "confirmed",
+        "failed"
+      ]
+    },
+    "AttestationSignatures": {
+      "title": "AttestationSignatures",
+      "description": "Signatures on an attestation (multi-sig or aggregated)",
+      "anyOf": [
+        {
+          "description": "Ed25519 multi-signature (one signature per witness)",
+          "type": "object",
+          "required": [
+            "signatures"
+          ],
+          "properties": {
+            "signatures": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WitnessSignature"
+              }
+            }
+          }
+        },
+        {
+          "description": "BLS aggregated signature (single signature from multiple witnesses)",
+          "type": "object",
+          "required": [
+            "signature",
+            "signers"
+          ],
+          "properties": {
+            "signature": {
+              "description": "Aggregated BLS signature",
+              "type": "string"
+            },
+            "signers": {
+              "description": "List of witness IDs that participated",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "BatchInclusion": {
+      "title": "BatchInclusion",
+      "description": "Inclusion of an attestation in a batch's merkle tree.",
+      "type": "object",
+      "required": [
+        "batch",
+        "merkle_proof"
+      ],
+      "properties": {
+        "batch": {
+          "$ref": "#/definitions/AttestationBatch"
+        },
+        "merkle_proof": {
+          "$ref": "#/definitions/MerkleProof"
+        }
+      }
+    },
+    "CreateAttestationRequest": {
+      "title": "CreateAttestationRequest",
+      "description": "Request to create or retrieve the canonical attestation job for a hash.",
+      "type": "object",
+      "required": [
+        "hash"
+      ],
+      "properties": {
+        "freebird_token": {
+          "description": "Optional Freebird token for Sybil resistance.",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FreebirdToken"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hash": {
+          "description": "SHA-256 hash to attest (hex encoded).",
+          "type": "string"
+        }
+      }
+    },
+    "CrossAnchor": {
+      "title": "CrossAnchor",
+      "description": "Cross-anchor attestation from a peer network.\n\nThe peer network signs an [`Attestation`](crate::Attestation) whose `hash` is the cross-anchored batch's merkle root and whose `network_id` is the peer's own network ID.  This makes the cross-anchor a self-contained, independently verifiable threshold signature — clients can verify it against the peer's published [`NetworkConfig`] without trusting the originating gateway.",
+      "type": "object",
+      "required": [
+        "batch",
+        "timestamp",
+        "witness_attestation",
+        "witnessing_network"
+      ],
+      "properties": {
+        "batch": {
+          "description": "The batch being witnessed",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AttestationBatch"
+            }
+          ]
+        },
+        "timestamp": {
+          "description": "When this cross-anchor was created (Unix seconds)",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "witness_attestation": {
+          "description": "Signed attestation from the peer network over `batch.merkle_root`",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SignedAttestation"
+            }
+          ]
+        },
+        "witnessing_network": {
+          "description": "ID of the network that witnessed this batch",
+          "type": "string"
+        }
+      }
+    },
+    "ExternalAnchorProof": {
+      "title": "ExternalAnchorProof",
+      "description": "Proof that data was anchored to an external service",
+      "type": "object",
+      "required": [
+        "proof",
+        "provider",
+        "timestamp"
+      ],
+      "properties": {
+        "anchored_data": {
+          "description": "Optional: the actual data that was anchored (for verification)",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0.0
+          }
+        },
+        "proof": {
+          "description": "Provider-specific proof data (URL, transaction hash, etc.)"
+        },
+        "provider": {
+          "description": "Type of anchor provider",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AnchorProviderType"
+            }
+          ]
+        },
+        "timestamp": {
+          "description": "When this anchor was created",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ExternalAnchorsConfig": {
+      "description": "Configuration for external anchoring",
+      "type": "object",
+      "properties": {
+        "anchor_period": {
+          "description": "How often to anchor batches (seconds)",
+          "default": 3600,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "enabled": {
+          "description": "Whether external anchoring is enabled",
+          "default": false,
+          "type": "boolean"
+        },
+        "minimum_required": {
+          "description": "Minimum number of successful anchors required",
+          "default": 1,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "providers": {
+          "description": "List of anchor providers",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AnchorProviderConfig"
+          }
+        }
+      }
+    },
+    "FederationConfig": {
+      "description": "Configuration for federation",
+      "type": "object",
+      "properties": {
+        "batch_period": {
+          "description": "How often to close batches (seconds)",
+          "default": 3600,
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "cross_anchor_threshold": {
+          "description": "Minimum number of peer networks that must cross-anchor",
+          "default": 0,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "enabled": {
+          "description": "Whether federation is enabled",
+          "default": false,
+          "type": "boolean"
+        },
+        "peer_networks": {
+          "description": "Peer networks to federate with",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PeerNetworkInfo"
+          }
+        }
+      }
+    },
+    "FreebirdToken": {
+      "title": "FreebirdToken",
+      "description": "Freebird token for anonymous authorization",
+      "type": "object",
+      "required": [
+        "token_b64"
+      ],
+      "properties": {
+        "token_b64": {
+          "description": "Base64url-encoded Freebird redemption token.",
+          "type": "string"
+        }
+      }
+    },
+    "LogConsistencyProof": {
+      "title": "LogConsistencyProof",
+      "description": "Consistency proof linking two signed tree heads of the same log.",
+      "type": "object",
+      "required": [
+        "hashes",
+        "new_sth",
+        "old_sth"
+      ],
+      "properties": {
+        "hashes": {
+          "description": "Hashes from RFC 9162 §2.1.4.1 PROOF.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "new_sth": {
+          "$ref": "#/definitions/SignedTreeHead"
+        },
+        "old_sth": {
+          "$ref": "#/definitions/SignedTreeHead"
+        }
+      }
+    },
+    "LogInclusionProofResponse": {
+      "title": "LogInclusionProofResponse",
+      "description": "RFC 9162 §4.11 inclusion proof response (`GET /v1/log/proof`).",
+      "type": "object",
+      "required": [
+        "audit_path",
+        "leaf_index",
+        "sth",
+        "tree_size"
+      ],
+      "properties": {
+        "audit_path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "leaf_index": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "sth": {
+          "$ref": "#/definitions/SignedTreeHead"
+        },
+        "tree_size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "MerkleProof": {
+      "title": "MerkleProof",
+      "description": "Inclusion proof for a single leaf at `leaf_index` in a tree of size `tree_size`.  The siblings are listed bottom-up (leaf level first).",
+      "type": "object",
+      "required": [
+        "leaf",
+        "leaf_index",
+        "root",
+        "siblings",
+        "tree_size"
+      ],
+      "properties": {
+        "leaf": {
+          "description": "The raw leaf bytes (pre-hash).  `hash_leaf(leaf)` is the value at position `leaf_index` in the tree.",
+          "type": "string"
+        },
+        "leaf_index": {
+          "description": "0-based position of `leaf` in the log.  Renamed from `index` so callers are forced to update for the position-aware verifier.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "root": {
+          "description": "Root hash of the tree at `tree_size`.  Carried for convenience; the verifier may also pass an externally trusted root and ignore this.",
+          "type": "string"
+        },
+        "siblings": {
+          "description": "Audit path: sibling hashes from leaf level upward to (but not including) the root.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tree_size": {
+          "description": "Total number of leaves in the tree this proof was generated against. Required to walk the unbalanced-split tree shape.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "MerkleProofResponse": {
+      "title": "MerkleProofResponse",
+      "description": "Response for a Merkle inclusion proof (`GET /v1/proof/:hash`).",
+      "type": "object",
+      "required": [
+        "batch_id",
+        "hash",
+        "index",
+        "merkle_root",
+        "proof"
+      ],
+      "properties": {
+        "batch_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "hash": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "merkle_root": {
+          "type": "string"
+        },
+        "proof": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "NetworkConfig": {
+      "title": "NetworkConfig",
+      "description": "Network configuration",
+      "type": "object",
+      "required": [
+        "id",
+        "threshold",
+        "witnesses"
+      ],
+      "properties": {
+        "external_anchors": {
+          "description": "External anchors configuration (Phase 3)",
+          "default": {
+            "anchor_period": 0,
+            "enabled": false,
+            "minimum_required": 0,
+            "providers": []
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExternalAnchorsConfig"
+            }
+          ]
+        },
+        "federation": {
+          "description": "Federation configuration (Phase 2)",
+          "default": {
+            "batch_period": 0,
+            "cross_anchor_threshold": 0,
+            "enabled": false,
+            "peer_networks": []
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/FederationConfig"
+            }
+          ]
+        },
+        "federation_peers": {
+          "description": "Deprecated: Use federation.peer_networks instead",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "description": "Network identifier",
+          "type": "string"
+        },
+        "signature_scheme": {
+          "description": "Signature scheme (ed25519 or bls)",
+          "default": "ed25519",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SignatureScheme"
+            }
+          ]
+        },
+        "threshold": {
+          "description": "Minimum number of signatures required",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "witnesses": {
+          "description": "List of witnesses in this network",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WitnessInfo"
+          }
+        }
+      }
+    },
+    "NetworkConfigPublic": {
+      "title": "NetworkConfigPublic",
+      "description": "Public-facing subset of [`NetworkConfig`] — excludes internal endpoints, peer URLs, and auth tokens. Returned by `GET /v1/config`.",
+      "type": "object",
+      "required": [
+        "id",
+        "signature_scheme",
+        "threshold",
+        "witness_count"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "signature_scheme": {
+          "$ref": "#/definitions/SignatureScheme"
+        },
+        "threshold": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "witness_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "PeerNetworkInfo": {
+      "description": "Information about a peer network",
+      "type": "object",
+      "required": [
+        "gateway",
+        "id"
+      ],
+      "properties": {
+        "gateway": {
+          "description": "Gateway URL for this peer network",
+          "type": "string"
+        },
+        "id": {
+          "description": "Peer network ID",
+          "type": "string"
+        },
+        "min_witnesses": {
+          "description": "Minimum number of witnesses required from this peer",
+          "default": 2,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ProofBundle": {
+      "title": "ProofBundle",
+      "description": "Self-contained bundle proving the full chain of trust for a hash.\n\nAll four layers are independently verifiable, so a client can confirm: - **Threshold signature** — the home network's witnesses signed the attestation. - **Batch inclusion** — the attestation was committed to a merkle root. - **Cross-anchors** — peer networks signed that root. - **External anchors** — the root was committed to external systems (Internet Archive, Trillian, DNS, blockchain).",
+      "type": "object",
+      "required": [
+        "signed_attestation"
+      ],
+      "properties": {
+        "batch_inclusion": {
+          "description": "Merkle inclusion proof, present once the attestation has been batched",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BatchInclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cross_anchors": {
+          "description": "Cross-anchors from peer networks",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CrossAnchor"
+          }
+        },
+        "external_anchors": {
+          "description": "External anchor proofs (Internet Archive, Trillian, DNS, blockchain)",
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExternalAnchorProof"
+          }
+        },
+        "signed_attestation": {
+          "description": "Threshold-signed attestation from the home network",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SignedAttestation"
+            }
+          ]
+        }
+      }
+    },
+    "ProofBundleVerification": {
+      "title": "ProofBundleVerification",
+      "description": "Result of verifying a [`ProofBundle`].",
+      "type": "object",
+      "required": [
+        "cross_anchors_verified",
+        "external_anchors_present",
+        "level",
+        "required_signatures",
+        "verified_signatures"
+      ],
+      "properties": {
+        "batch_inclusion_verified": {
+          "description": "Whether the merkle inclusion proof verified, if present",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cross_anchors_verified": {
+          "description": "Per-peer verification status: `(witnessing_network, verified)`",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "external_anchors_present": {
+          "description": "Number of external anchor proofs included (not cryptographically verified here)",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "level": {
+          "description": "Highest level of verification achieved",
+          "allOf": [
+            {
+              "$ref": "#/definitions/VerificationLevel"
+            }
+          ]
+        },
+        "required_signatures": {
+          "description": "Threshold required by the home network",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "verified_signatures": {
+          "description": "Number of valid signatures on the threshold-signed attestation",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ProofVerificationConfig": {
+      "title": "ProofVerificationConfig",
+      "description": "Configuration for verifying a [`ProofBundle`] offline.",
+      "type": "object",
+      "required": [
+        "network",
+        "peers"
+      ],
+      "properties": {
+        "network": {
+          "description": "The home network's configuration (used to verify the threshold signature)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/NetworkConfig"
+            }
+          ]
+        },
+        "peers": {
+          "description": "Peer network configurations (used to verify cross-anchors). Cross-anchors from networks not present here are reported as unverified.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NetworkConfig"
+          }
+        }
+      }
+    },
+    "SignatureScheme": {
+      "title": "SignatureScheme",
+      "description": "Signature scheme used by the network",
+      "oneOf": [
+        {
+          "description": "Ed25519 signatures (Phase 1, multi-sig)",
+          "type": "string",
+          "enum": [
+            "ed25519"
+          ]
+        },
+        {
+          "description": "BLS signatures (Phase 4, aggregated)",
+          "type": "string",
+          "enum": [
+            "bls"
+          ]
+        }
+      ]
+    },
+    "SignedAttestation": {
+      "title": "SignedAttestation",
+      "description": "Complete signed attestation with all witness signatures",
+      "type": "object",
+      "required": [
+        "attestation",
+        "signatures"
+      ],
+      "properties": {
+        "attestation": {
+          "$ref": "#/definitions/Attestation"
+        },
+        "signatures": {
+          "description": "Signatures (multi-sig or aggregated)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/AttestationSignatures"
+            }
+          ]
+        }
+      }
+    },
+    "SignedTreeHead": {
+      "title": "SignedTreeHead",
+      "description": "A [`TreeHead`] together with witness threshold signatures over its digest.  The same `AttestationSignatures` machinery used for individual timestamps is reused; verification piggybacks on [`crate::verify_signed_attestation`].",
+      "type": "object",
+      "required": [
+        "signed_attestation",
+        "tree_head"
+      ],
+      "properties": {
+        "signed_attestation": {
+          "$ref": "#/definitions/SignedAttestation"
+        },
+        "tree_head": {
+          "$ref": "#/definitions/TreeHead"
+        }
+      }
+    },
+    "TimestampRequest": {
+      "title": "TimestampRequest",
+      "description": "Request to timestamp a hash",
+      "type": "object",
+      "required": [
+        "hash"
+      ],
+      "properties": {
+        "freebird_token": {
+          "description": "Optional Freebird token for Sybil resistance",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FreebirdToken"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hash": {
+          "description": "SHA-256 hash to timestamp (hex encoded)",
+          "type": "string"
+        }
+      }
+    },
+    "TimestampResponse": {
+      "title": "TimestampResponse",
+      "description": "Response from successful timestamp request",
+      "type": "object",
+      "required": [
+        "attestation"
+      ],
+      "properties": {
+        "attestation": {
+          "$ref": "#/definitions/SignedAttestation"
+        },
+        "status": {
+          "default": "confirmed",
+          "type": "string"
+        }
+      }
+    },
+    "TreeHead": {
+      "title": "TreeHead",
+      "description": "Plaintext fields of a tree head.  The signing digest commits to all of these so a verifier given a [`SignedTreeHead`] can recompute it.",
+      "type": "object",
+      "required": [
+        "network_id",
+        "root_hash",
+        "timestamp",
+        "tree_size"
+      ],
+      "properties": {
+        "network_id": {
+          "description": "Network this STH belongs to.",
+          "type": "string"
+        },
+        "root_hash": {
+          "description": "Merkle root of the log at `tree_size`.",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "When this STH was issued (Unix seconds).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "tree_size": {
+          "description": "Number of leaves in the log.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      }
+    },
+    "VerificationLevel": {
+      "title": "VerificationLevel",
+      "description": "Level of verification achieved",
+      "oneOf": [
+        {
+          "description": "No attestation found",
+          "type": "string",
+          "enum": [
+            "None"
+          ]
+        },
+        {
+          "description": "Basic: Threshold signatures from witnesses (Phase 1)",
+          "type": "string",
+          "enum": [
+            "Basic"
+          ]
+        },
+        {
+          "description": "Batched: Included in merkle tree batch",
+          "type": "string",
+          "enum": [
+            "Batched"
+          ]
+        },
+        {
+          "description": "Federated: Cross-anchored by peer networks (Phase 2)",
+          "type": "object",
+          "required": [
+            "Federated"
+          ],
+          "properties": {
+            "Federated": {
+              "type": "object",
+              "required": [
+                "peer_count"
+              ],
+              "properties": {
+                "peer_count": {
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 0.0
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "VerifyRequest": {
+      "title": "VerifyRequest",
+      "description": "Request to verify an attestation",
+      "type": "object",
+      "required": [
+        "attestation"
+      ],
+      "properties": {
+        "attestation": {
+          "$ref": "#/definitions/SignedAttestation"
+        }
+      }
+    },
+    "VerifyResponse": {
+      "title": "VerifyResponse",
+      "description": "Response from verification",
+      "type": "object",
+      "required": [
+        "message",
+        "required_signatures",
+        "valid",
+        "verified_signatures"
+      ],
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "required_signatures": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "verified_signatures": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "WitnessInfo": {
+      "title": "WitnessInfo",
+      "description": "Information about a witness node",
+      "type": "object",
+      "required": [
+        "endpoint",
+        "id",
+        "pubkey"
+      ],
+      "properties": {
+        "endpoint": {
+          "description": "HTTP endpoint for this witness",
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique identifier for this witness",
+          "type": "string"
+        },
+        "pubkey": {
+          "description": "Ed25519 public key (hex encoded)",
+          "type": "string"
+        }
+      }
+    },
+    "WitnessSignature": {
+      "title": "WitnessSignature",
+      "description": "A single witness's signature on an attestation",
+      "type": "object",
+      "required": [
+        "signature",
+        "witness_id"
+      ],
+      "properties": {
+        "signature": {
+          "description": "Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)",
+          "type": "string"
+        },
+        "witness_id": {
+          "description": "ID of the witness that signed",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

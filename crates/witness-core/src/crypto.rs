@@ -1,4 +1,5 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+#[cfg(feature = "keygen")]
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -9,6 +10,7 @@ use crate::{
 };
 
 /// Generate a new Ed25519 keypair
+#[cfg(feature = "keygen")]
 pub fn generate_keypair() -> (SigningKey, VerifyingKey) {
     let signing_key = SigningKey::generate(&mut OsRng);
     let verifying_key = signing_key.verifying_key();

@@ -1,0 +1,40 @@
+{
+  "name": "@witness/sdk",
+  "version": "0.8.0",
+  "description": "TypeScript SDK for the Witness timestamping network",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./verify": {
+      "types": "./dist/verify/index.d.ts",
+      "import": "./dist/verify/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "gen:types": "node scripts/gen-types.mjs",
+    "check:types": "npm run gen:types && git diff --exit-code src/types.generated.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && node scripts/copy-wasm.mjs",
+    "test": "vitest run",
+    "test:conformance": "vitest run test/conformance.test.ts",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "json-schema-to-typescript": "^15.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  }
+}

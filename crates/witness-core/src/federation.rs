@@ -5,7 +5,8 @@ use crate::merkle::MerkleProof;
 use crate::{NetworkConfig, Result, SignedAttestation, WitnessError};
 
 /// A batch of attestations with their merkle root
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AttestationBatch {
     /// Unique batch ID
     pub id: u64,
@@ -15,6 +16,8 @@ pub struct AttestationBatch {
 
     /// Merkle root of all attestations in this batch
     #[serde(with = "crate::serde_hex::array32")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub merkle_root: [u8; 32],
 
     /// Start of batch period (Unix seconds)
@@ -35,7 +38,8 @@ pub struct AttestationBatch {
 /// independently verifiable threshold signature — clients can verify it
 /// against the peer's published [`NetworkConfig`] without trusting the
 /// originating gateway.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CrossAnchor {
     /// The batch being witnessed
     pub batch: AttestationBatch,
@@ -83,7 +87,8 @@ pub fn verify_cross_anchor(
 }
 
 /// Configuration for federation
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FederationConfig {
     /// Whether federation is enabled
     #[serde(default)]
@@ -103,10 +108,12 @@ pub struct FederationConfig {
 
     /// Token that peers must present when calling our federation anchor endpoint
     #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub inbound_auth_token: Option<String>,
 
     /// Previous inbound auth token (accepted during rotation)
     #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub previous_inbound_auth_token: Option<String>,
 }
 
@@ -115,7 +122,8 @@ fn default_batch_period() -> u64 {
 }
 
 /// Information about a peer network
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PeerNetworkInfo {
     /// Peer network ID
     pub id: String,
@@ -129,6 +137,7 @@ pub struct PeerNetworkInfo {
 
     /// Bearer token to send when calling this peer's federation endpoint
     #[serde(default, skip_serializing)]
+    #[schemars(skip)]
     pub auth_token: Option<String>,
 }
 
@@ -179,7 +188,7 @@ pub struct FederatedVerifyResponse {
 }
 
 /// Level of verification achieved
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub enum VerificationLevel {
     /// No attestation found
     None,
@@ -208,7 +217,8 @@ impl std::fmt::Display for VerificationLevel {
 }
 
 /// Inclusion of an attestation in a batch's merkle tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct BatchInclusion {
     pub batch: AttestationBatch,
     pub merkle_proof: MerkleProof,
@@ -222,7 +232,8 @@ pub struct BatchInclusion {
 /// - **Cross-anchors** — peer networks signed that root.
 /// - **External anchors** — the root was committed to external systems
 ///   (Internet Archive, Trillian, DNS, blockchain).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ProofBundle {
     /// Threshold-signed attestation from the home network
     pub signed_attestation: SignedAttestation,
@@ -240,7 +251,7 @@ pub struct ProofBundle {
 }
 
 /// Configuration for verifying a [`ProofBundle`] offline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, schemars::JsonSchema)]
 pub struct ProofVerificationConfig {
     /// The home network's configuration (used to verify the threshold signature)
     pub network: NetworkConfig,
@@ -250,7 +261,7 @@ pub struct ProofVerificationConfig {
 }
 
 /// Result of verifying a [`ProofBundle`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProofBundleVerification {
     /// Number of valid signatures on the threshold-signed attestation
     pub verified_signatures: usize,

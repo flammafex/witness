@@ -2,7 +2,8 @@ use crate::federation::AttestationBatch;
 use serde::{Deserialize, Serialize};
 
 /// External anchor provider types
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AnchorProviderType {
     /// Internet Archive (archive.org)
@@ -30,7 +31,8 @@ impl std::fmt::Display for AnchorProviderType {
 }
 
 /// Configuration for an external anchor provider
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct AnchorProviderConfig {
     /// Type of anchor provider
     #[serde(rename = "type")]
@@ -46,6 +48,7 @@ pub struct AnchorProviderConfig {
 
     /// Provider-specific configuration (URL, credentials, etc.)
     #[serde(flatten)]
+    #[schemars(skip)]
     pub config: serde_json::Value,
 }
 
@@ -58,7 +61,8 @@ fn default_priority() -> u32 {
 }
 
 /// Configuration for external anchoring
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ExternalAnchorsConfig {
     /// Whether external anchoring is enabled
     #[serde(default)]
@@ -86,7 +90,8 @@ fn default_minimum_required() -> usize {
 }
 
 /// Proof that data was anchored to an external service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ExternalAnchorProof {
     /// Type of anchor provider
     pub provider: AnchorProviderType,

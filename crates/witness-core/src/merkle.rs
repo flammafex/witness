@@ -18,16 +18,21 @@ const INTERNAL_PREFIX: u8 = 0x01;
 
 /// Inclusion proof for a single leaf at `leaf_index` in a tree of size
 /// `tree_size`.  The siblings are listed bottom-up (leaf level first).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MerkleProof {
     /// The raw leaf bytes (pre-hash).  `hash_leaf(leaf)` is the value at
     /// position `leaf_index` in the tree.
     #[serde(with = "hex_bytes")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub leaf: [u8; 32],
 
     /// Audit path: sibling hashes from leaf level upward to (but not
     /// including) the root.
     #[serde(with = "hex_bytes_vec")]
+    #[schemars(with = "Vec<String>")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub siblings: Vec<[u8; 32]>,
 
     /// 0-based position of `leaf` in the log.  Renamed from `index` so
@@ -41,6 +46,8 @@ pub struct MerkleProof {
     /// Root hash of the tree at `tree_size`.  Carried for convenience; the
     /// verifier may also pass an externally trusted root and ignore this.
     #[serde(with = "hex_bytes")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub root: [u8; 32],
 }
 

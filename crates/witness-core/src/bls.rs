@@ -1,7 +1,10 @@
 use blst::min_sig::{AggregateSignature, PublicKey, SecretKey, Signature};
 use blst::BLST_ERROR;
+#[cfg(feature = "keygen")]
 use rand::rngs::OsRng;
+#[cfg(feature = "keygen")]
 use rand::RngCore;
+#[cfg(feature = "keygen")]
 use zeroize::Zeroize;
 
 use crate::{Attestation, Result, WitnessError};
@@ -9,6 +12,7 @@ use crate::{Attestation, Result, WitnessError};
 const DST: &[u8] = b"WITNESS_BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_";
 
 /// Generate a new BLS keypair
+#[cfg(feature = "keygen")]
 pub fn generate_bls_keypair() -> (SecretKey, PublicKey) {
     let mut ikm = [0u8; 32];
     OsRng.fill_bytes(&mut ikm);

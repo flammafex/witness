@@ -24,7 +24,8 @@ const STH_DOMAIN: &[u8] = b"witness-sth-v1\x00";
 
 /// Plaintext fields of a tree head.  The signing digest commits to all of
 /// these so a verifier given a [`SignedTreeHead`] can recompute it.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct TreeHead {
     /// Network this STH belongs to.
     pub network_id: String,
@@ -34,6 +35,8 @@ pub struct TreeHead {
     pub timestamp: u64,
     /// Merkle root of the log at `tree_size`.
     #[serde(with = "crate::serde_hex::array32")]
+    #[schemars(with = "String")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub root_hash: [u8; 32],
 }
 
@@ -70,7 +73,8 @@ impl TreeHead {
 /// digest.  The same `AttestationSignatures` machinery used for individual
 /// timestamps is reused; verification piggybacks on
 /// [`crate::verify_signed_attestation`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SignedTreeHead {
     pub tree_head: TreeHead,
     pub signed_attestation: SignedAttestation,
@@ -107,12 +111,15 @@ pub fn verify_signed_tree_head(sth: &SignedTreeHead, config: &NetworkConfig) -> 
 }
 
 /// Consistency proof linking two signed tree heads of the same log.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LogConsistencyProof {
     pub old_sth: SignedTreeHead,
     pub new_sth: SignedTreeHead,
     /// Hashes from RFC 9162 §2.1.4.1 PROOF.
     #[serde(with = "crate::merkle::hex_bytes_vec")]
+    #[schemars(with = "Vec<String>")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub hashes: Vec<[u8; 32]>,
 }
 
