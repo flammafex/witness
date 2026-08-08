@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WitnessClient } from '../src/client';
 import {
+  AbortError,
   ConfirmationTimeoutError,
   DecodeError,
   JobFailedError,
@@ -8,6 +9,7 @@ import {
 } from '../src/errors';
 import { mockFetch, HASH_32, HASH_HEX } from './helpers';
 import type { AttestationJobResponse } from '../src/types.generated';
+import { U64_MAX } from '../src/json';
 
 const pendingJob = (over: Partial<AttestationJobResponse> = {}): AttestationJobResponse => ({
   attestation: {
@@ -117,6 +119,20 @@ describe('WitnessClient', () => {
     ).rejects.toBeInstanceOf(ConfirmationTimeoutError);
   });
 
+  it('waitForConfirmation deadline covers a hanging response body', async () => {
+    const response = {
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>(() => {}),
+    } as Response;
+    const fetchImpl = vi.fn(async () => response) as unknown as typeof fetch;
+    const client = new WitnessClient({ gatewayUrl: 'http://gw', fetch: fetchImpl });
+
+    await expect(
+      client.waitForConfirmation(HASH_32, { intervalMs: 1, timeoutMs: 20 }),
+    ).rejects.toBeInstanceOf(ConfirmationTimeoutError);
+  });
+
   it('waitForConfirmation throws DecodeError on confirmed without signed_attestation', async () => {
     const fetchImpl = mockFetch({
       [`/v1/attestations/${HASH_HEX}`]: () =>
@@ -140,7 +156,7 @@ describe('WitnessClient', () => {
       signal: controller.signal,
     });
     setTimeout(() => controller.abort(), 10);
-    await expect(p).rejects.toThrow();
+    await expect(p).rejects.toBeInstanceOf(AbortError);
   });
 
   it('getAnchors throws NotFoundError on 404', async () => {
@@ -196,6 +212,21 @@ describe('WitnessClient', () => {
     expect(res.valid).toBe(true);
     expect(captured?.url).toBe('http://gw/v1/verify');
     expect(captured?.body).toEqual({ attestation: signed });
+  });
+
+  it('formats exact u64 log query values and rejects unsafe numbers', async () => {
+    let requested = '';
+    const fetchImpl = mockFetch({
+      [`/v1/log/sth/${U64_MAX}`]: (request) => {
+        requested = request.url;
+        return new Response('{}', { status: 200 });
+      },
+    });
+    const client = new WitnessClient({ gatewayUrl: 'http://gw', fetch: fetchImpl });
+
+    await client.sthAtSize(U64_MAX);
+    expect(requested).toBe(`http://gw/v1/log/sth/${U64_MAX}`);
+    await expect(client.sthAtSize(Number.MAX_SAFE_INTEGER + 1)).rejects.toThrow(TypeError);
   });
 
   it('maps non-2xx to HttpStatusError and 404-on-read to NotFoundError', async () => {

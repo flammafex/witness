@@ -6,7 +6,7 @@
 //! choice, never a silent default here.
 
 use witness_core::{
-    LogConsistencyProof, LogInclusionProofResponse, NetworkConfig, ProofBundle,
+    LogConsistencyProof, LogInclusionProofResponse, NetworkVerificationConfig, ProofBundle,
     ProofBundleVerification, ProofVerificationConfig, SignedAttestation, SignedTreeHead,
     WitnessError,
 };
@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 ///
 /// Returns the number of valid signatures, or an error if the threshold isn't
 /// met or any structural check fails.
-pub fn verify(signed: &SignedAttestation, config: &NetworkConfig) -> Result<usize> {
+pub fn verify(signed: &SignedAttestation, config: &NetworkVerificationConfig) -> Result<usize> {
     witness_core::verify_signed_attestation(signed, config).map_err(Error::Verification)
 }
 
@@ -37,12 +37,15 @@ pub fn verify_proof_bundle(
 /// Verify a signed tree head against the issuing network's configuration.
 ///
 /// Returns the number of valid signatures.
-pub fn verify_sth(sth: &SignedTreeHead, config: &NetworkConfig) -> Result<usize> {
+pub fn verify_sth(sth: &SignedTreeHead, config: &NetworkVerificationConfig) -> Result<usize> {
     witness_core::verify_signed_tree_head(sth, config).map_err(Error::Verification)
 }
 
 /// Verify that `proof.new_sth` is a consistent extension of `proof.old_sth`.
-pub fn verify_consistency(proof: &LogConsistencyProof, config: &NetworkConfig) -> Result<()> {
+pub fn verify_consistency(
+    proof: &LogConsistencyProof,
+    config: &NetworkVerificationConfig,
+) -> Result<()> {
     witness_core::verify_log_consistency(proof, config).map_err(Error::Verification)
 }
 
@@ -52,7 +55,7 @@ pub fn verify_consistency(proof: &LogConsistencyProof, config: &NetworkConfig) -
 /// §3.6). The audit path is then checked against the STH's committed root.
 ///
 /// Note: this verifies the inclusion proof against the STH's root. Verifying the
-/// STH's threshold signature requires a `NetworkConfig` and is done separately
+/// STH's threshold signature requires a `NetworkVerificationConfig` and is done separately
 /// via [`verify_sth`].
 pub fn verify_log_inclusion(proof: &LogInclusionProofResponse, leaf: [u8; 32]) -> Result<()> {
     if proof.tree_size != proof.sth.tree_head.tree_size {

@@ -250,18 +250,18 @@ paths:
       tags:
       - super::routes
       summary: |-
-        Return the full [`NetworkConfig`] (witnesses, threshold, signature scheme,
-        federation peers, external anchor providers) for offline verification of
-        proof bundles.  Auth tokens are omitted via `#[serde(skip_serializing)]`
-        on the relevant fields.
+        Return the secret-free public verification configuration for offline
+        verification of attestations, STHs, and proof bundles.  This is an explicit
+        projection of the operational [`NetworkConfig`] and never serializes
+        endpoints, bearer tokens, inbound federation secrets, or anchor providers.
       operationId: network_config_handler
       responses:
         '200':
-          description: Full network configuration with witness public keys (auth tokens stripped server-side)
+          description: Secret-free public verification configuration
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NetworkConfig'
+                $ref: '#/components/schemas/NetworkVerificationConfig'
   /v1/proof/{hash}:
     get:
       tags:
@@ -317,25 +317,6 @@ paths:
           description: 'Switching Protocols: WebSocket upgrade. See docs/asyncapi.yaml for the event protocol.'
 components:
   schemas:
-    AnchorProviderConfig:
-      allOf:
-      - description: Provider-specific configuration (URL, credentials, etc.)
-      - type: object
-        required:
-        - type
-        properties:
-          enabled:
-            type: boolean
-            description: Whether this provider is enabled
-          priority:
-            type: integer
-            format: int32
-            description: Priority (lower = higher priority, providers tried in order)
-            minimum: 0
-          type:
-            $ref: '#/components/schemas/AnchorProviderType'
-            description: Type of anchor provider
-      description: Configuration for an external anchor provider
     AnchorProviderType:
       type: string
       description: External anchor provider types
@@ -458,10 +439,16 @@ components:
         required:
         - signatures
         properties:
+          signature:
+            type: object
+            enum: []
           signatures:
             type: array
             items:
               $ref: '#/components/schemas/WitnessSignature'
+          signers:
+            type: object
+            enum: []
       - type: object
         description: BLS aggregated signature (single signature from multiple witnesses)
         required:
@@ -470,7 +457,10 @@ components:
         properties:
           signature:
             type: string
-            description: Aggregated BLS signature
+            description: Aggregated BLS signature (48 bytes / 96 lowercase hex characters).
+          signatures:
+            type: object
+            enum: []
           signers:
             type: array
             items:
@@ -511,7 +501,7 @@ components:
         is the cross-anchored batch's merkle root and whose `network_id` is the
         peer's own network ID.  This makes the cross-anchor a self-contained,
         independently verifiable threshold signature — clients can verify it
-        against the peer's published [`NetworkConfig`] without trusting the
+        against the peer's published [`NetworkVerificationConfig`] without trusting the
         originating gateway.
       required:
       - batch
@@ -560,48 +550,26 @@ components:
           format: int64
           description: When this anchor was created
           minimum: 0
-    ExternalAnchorsConfig:
+    FederationVerificationConfig:
       type: object
-      description: Configuration for external anchoring
+      description: |-
+        Public federation discovery and policy fields used by verifiers.
+
+        This is deliberately separate from [`FederationConfig`]: it contains no
+        batch scheduling state or inbound authentication material.
       properties:
-        anchor_period:
-          type: integer
-          format: int64
-          description: How often to anchor batches (seconds)
-          minimum: 0
-        enabled:
-          type: boolean
-          description: Whether external anchoring is enabled
-        minimum_required:
-          type: integer
-          description: Minimum number of successful anchors required
-          minimum: 0
-        providers:
-          type: array
-          items:
-            $ref: '#/components/schemas/AnchorProviderConfig'
-          description: List of anchor providers
-    FederationConfig:
-      type: object
-      description: Configuration for federation
-      properties:
-        batch_period:
-          type: integer
-          format: int64
-          description: How often to close batches (seconds)
-          minimum: 0
         cross_anchor_threshold:
           type: integer
-          description: Minimum number of peer networks that must cross-anchor
+          description: Number of distinct configured peers required for a federated result.
           minimum: 0
         enabled:
           type: boolean
-          description: Whether federation is enabled
+          description: Whether cross-anchoring is enabled for this network.
         peer_networks:
           type: array
           items:
-            $ref: '#/components/schemas/PeerNetworkInfo'
-          description: Peer networks to federate with
+            $ref: '#/components/schemas/PeerNetworkVerificationInfo'
+          description: Public gateway discovery information for configured peers.
     FreebirdToken:
       type: object
       description: Freebird token for anonymous authorization
@@ -727,40 +695,6 @@ components:
           type: array
           items:
             type: string
-    NetworkConfig:
-      type: object
-      description: Network configuration
-      required:
-      - id
-      - witnesses
-      - threshold
-      properties:
-        external_anchors:
-          $ref: '#/components/schemas/ExternalAnchorsConfig'
-          description: External anchors configuration (Phase 3)
-        federation:
-          $ref: '#/components/schemas/FederationConfig'
-          description: Federation configuration (Phase 2)
-        federation_peers:
-          type: array
-          items:
-            type: string
-          description: 'Deprecated: Use federation.peer_networks instead'
-        id:
-          type: string
-          description: Network identifier
-        signature_scheme:
-          $ref: '#/components/schemas/SignatureScheme'
-          description: Signature scheme (ed25519 or bls)
-        threshold:
-          type: integer
-          description: Minimum number of signatures required
-          minimum: 0
-        witnesses:
-          type: array
-          items:
-            $ref: '#/components/schemas/WitnessInfo'
-          description: List of witnesses in this network
     NetworkConfigPublic:
       type: object
       description: |-
@@ -782,22 +716,53 @@ components:
         witness_count:
           type: integer
           minimum: 0
-    PeerNetworkInfo:
+    NetworkVerificationConfig:
       type: object
-      description: Information about a peer network
+      description: |-
+        Secret-free trust anchor for verifying attestations, STHs, and proof
+        bundles.  Operator `network.json` files are intentionally accepted as a
+        superset when deserializing this type: unknown operational fields are
+        ignored by serde, allowing offline tools to load existing files without
+        exposing those fields in the verification model.
+      required:
+      - id
+      - witnesses
+      - threshold
+      properties:
+        federation:
+          $ref: '#/components/schemas/FederationVerificationConfig'
+          description: Public federation discovery and policy.
+        id:
+          type: string
+          description: Network identifier pinned into signed attestations.
+        signature_scheme:
+          $ref: '#/components/schemas/SignatureScheme'
+          description: Signature scheme used by this network.
+        threshold:
+          type: integer
+          description: Minimum number of witness signatures required.
+          minimum: 0
+        witnesses:
+          type: array
+          items:
+            $ref: '#/components/schemas/VerificationWitnessInfo'
+          description: Witness identities and public keys.
+    PeerNetworkVerificationInfo:
+      type: object
+      description: Public discovery and verification policy for one federation peer.
       required:
       - id
       - gateway
       properties:
         gateway:
           type: string
-          description: Gateway URL for this peer network
+          description: Public gateway URL used to discover the peer's verification config.
         id:
           type: string
-          description: Peer network ID
+          description: Peer network ID.
         min_witnesses:
           type: integer
-          description: Minimum number of witnesses required from this peer
+          description: Minimum number of signatures required from this peer network.
           minimum: 0
     ProofBundle:
       type: object
@@ -891,6 +856,24 @@ components:
           format: int64
           description: Number of leaves in the log.
           minimum: 0
+    VerificationWitnessInfo:
+      type: object
+      description: |-
+        Public witness identity used by a [`NetworkVerificationConfig`].
+
+        Unlike [`WitnessInfo`], this DTO has no endpoint or authentication token.
+      required:
+      - id
+      - pubkey
+      properties:
+        id:
+          type: string
+          description: Unique witness identifier.
+        pubkey:
+          type: string
+          description: |-
+            Public key (Ed25519 32 bytes or BLS 96 bytes / 192 lowercase hex
+            characters, hex encoded).
     VerifyRequest:
       type: object
       description: Request to verify an attestation
@@ -918,23 +901,6 @@ components:
         verified_signatures:
           type: integer
           minimum: 0
-    WitnessInfo:
-      type: object
-      description: Information about a witness node
-      required:
-      - id
-      - pubkey
-      - endpoint
-      properties:
-        endpoint:
-          type: string
-          description: HTTP endpoint for this witness
-        id:
-          type: string
-          description: Unique identifier for this witness
-        pubkey:
-          type: string
-          description: Ed25519 public key (hex encoded)
     WitnessSignature:
       type: object
       description: A single witness's signature on an attestation
@@ -944,7 +910,9 @@ components:
       properties:
         signature:
           type: string
-          description: Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
+          description: |-
+            Signature bytes (Ed25519 64 bytes or BLS 48 bytes / 96 lowercase hex
+            characters, depending on network configuration).
         witness_id:
           type: string
           description: ID of the witness that signed

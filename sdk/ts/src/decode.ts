@@ -16,6 +16,7 @@
 // all emitters produce lowercase.
 
 import { DecodeError } from './errors.js';
+import { parseWitnessJson } from './json.js';
 
 /** A single decoded multi-sig entry (signature as raw bytes). */
 export interface DecodedWitnessSignature {
@@ -72,12 +73,7 @@ function decodeWitnessSignature(v: unknown): DecodedWitnessSignature {
  * Throws `DecodeError` for ambiguous, partial, or malformed payloads.
  */
 export function decodeAttestationSignatures(json: string): DecodedAttestationSignatures {
-  let obj: unknown;
-  try {
-    obj = JSON.parse(json);
-  } catch {
-    throw new DecodeError('invalid JSON');
-  }
+  const obj = parseWitnessJson<unknown>(json);
   if (!isRecord(obj)) {
     throw new DecodeError('ambiguous or malformed attestation signatures');
   }

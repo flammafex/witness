@@ -123,6 +123,11 @@ POST http://localhost:9003/v1/federation/anchor
 
 ## Security Model
 
+`GET /v1/network` returns the secret-free `NetworkVerificationConfig` used for
+local verification: witness public keys, threshold, and public federation peer
+discovery only. Bearer tokens and operational endpoints remain in operator
+configuration and are not exposed to SDK consumers.
+
 ### Phase 1 (Single Network)
 - **Attack**: Compromise 2 of 3 witnesses in Network A
 - **Result**: Can forge timestamps
@@ -131,6 +136,12 @@ POST http://localhost:9003/v1/federation/anchor
 - **Attack**: Compromise 2 of 3 witnesses in ALL networks (A, B, C)
 - **Requires**: 6 witnesses across 3 independent operators
 - **Much harder**: Different organizations, infrastructure, security
+
+The client reports `Federated` only when the configured peer threshold is met,
+each cross-anchor signature verifies against a pinned peer
+`NetworkVerificationConfig`, and the batch inclusion layer verifies. Missing
+peers reduce the achieved level; federation is independent durability, not
+Byzantine consensus or protection from colluding operators.
 
 ## Configuration
 

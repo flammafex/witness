@@ -6,7 +6,7 @@ This example demonstrates **BLS signature aggregation** for the Witness timestam
 
 BLS (Boneh-Lynn-Shacham) signatures have a unique property: **multiple signatures can be aggregated into a single signature**. This provides:
 
-- **50% bandwidth savings**: 3 signatures = 96 bytes instead of 192 bytes
+- **75% signature-byte savings**: 1 aggregated signature = 48 bytes instead of 3 × 64 = 192 bytes
 - **Smaller storage**: One signature stored instead of N
 - **Faster verification**: Single pairing check instead of N signature verifications
 - **Same security**: BLS12-381 provides 128-bit security (comparable to Ed25519)
@@ -47,7 +47,7 @@ witness-node --generate-key --bls
 
 Generates a BLS12-381 keypair:
 - **Private key**: 32 bytes (hex encoded)
-- **Public key**: 48 bytes (hex encoded, compressed G1 point)
+- **Public key**: 96 bytes (hex encoded, compressed G2 point; `blst::min_sig`)
 
 ### 2. **Witness Signing**
 
@@ -56,7 +56,7 @@ Each witness signs the attestation independently using BLS:
 ```rust
 // witness-node signs with BLS secret key
 let signature = sign_attestation_bls(&attestation, &secret_key);
-// Returns: 96-byte BLS signature (G2 point)
+// Returns: 48-byte BLS signature (G1 point; `blst::min_sig`)
 ```
 
 ### 3. **Gateway Aggregation**
@@ -65,13 +65,13 @@ The gateway collects N individual signatures and aggregates them:
 
 ```rust
 // Collect signatures from witnesses
-let sig1 = witness1.sign(attestation);  // 96 bytes
-let sig2 = witness2.sign(attestation);  // 96 bytes
-let sig3 = witness3.sign(attestation);  // 96 bytes
+let sig1 = witness1.sign(attestation);  // 48 bytes
+let sig2 = witness2.sign(attestation);  // 48 bytes
+let sig3 = witness3.sign(attestation);  // 48 bytes
 
 // Aggregate into single signature
 let aggregated = aggregate_signatures_bls(&[sig1, sig2, sig3]);
-// Returns: 96 bytes (same size, but represents all 3!)
+// Returns: 48 bytes (same size, but represents all 3!)
 ```
 
 ### 4. **Verification**
@@ -90,11 +90,11 @@ verify_aggregated_signature_bls(&attestation, &aggregated, &agg_pubkey);
 
 | Aspect | Ed25519 (Multi-sig) | BLS (Aggregated) |
 |--------|---------------------|------------------|
-| Signature size (3 witnesses) | 192 bytes (3×64) | 96 bytes |
-| Public key size | 32 bytes | 48 bytes |
+| Signature size (3 witnesses) | 192 bytes (3×64) | 48 bytes (`min_sig` G1) |
+| Public key size | 32 bytes | 96 bytes (`min_sig` G2) |
 | Signing speed | ~50 μs | ~500 μs |
 | Verification (3 sigs) | 3 checks (~150 μs) | 1 pairing (~2 ms) |
-| **Bandwidth** | 192 bytes | **96 bytes (50% savings)** |
+| **Signature bytes** | 192 bytes | **48 bytes (75% savings)** |
 | **Storage** | 3 rows | **1 row** |
 | Security level | 128-bit | 128-bit |
 
@@ -127,7 +127,7 @@ verify_aggregated_signature_bls(&attestation, &aggregated, &agg_pubkey);
   "witnesses": [
     {
       "id": "witness-1",
-      "pubkey": "<hex-encoded-48-bytes>",
+      "pubkey": "<hex-encoded-96-bytes>",
       "endpoint": "http://localhost:8001"
     }
   ]
@@ -168,10 +168,8 @@ witness --gateway http://localhost:9000 status <hash> --output json \
 Should show:
 ```json
 {
-  "Aggregated": {
-    "signature": "96-byte-hex-string",
-    "signers": ["witness-1", "witness-2", "witness-3"]
-  }
+  "signature": "48-byte-hex-string",
+  "signers": ["witness-1", "witness-2", "witness-3"]
 }
 ```
 
@@ -200,14 +198,14 @@ Total: ~266 bytes
 **BLS Aggregated:**
 ```
 Header: 32 bytes (hash) + 8 (timestamp) + ... = ~50 bytes
-Signature: 96 bytes (1 aggregated)
+Signature: 48 bytes (1 aggregated G1 signature)
 Signers: 3 × 8-byte IDs = 24 bytes
-Total: ~170 bytes
+Total: ~122 bytes
 ```
 
-**Savings: 96 bytes per attestation (36%)**
+**Savings: ~144 bytes per attestation (~54%)**
 
-At scale (1M attestations/day): **96 MB/day savings**
+At scale (1M attestations/day): **~144 MB/day savings**
 
 ## Advanced: BLS + Federation
 
@@ -216,8 +214,8 @@ For cross-network anchoring, BLS provides even greater benefits:
 ```bash
 # 3 networks, each with 3 witnesses = 9 total witnesses
 # Ed25519: 9 × 64 = 576 bytes of signatures
-# BLS: 96 bytes (single aggregated signature from all 9)
-# Savings: 83%!
+# BLS: 48 bytes (single aggregated signature from all 9)
+# Signature-byte savings: ~92%
 ```
 
 See `examples/federation/` for federation setup, then adapt for BLS.
@@ -230,7 +228,7 @@ See `examples/federation/` for federation setup, then adapt for BLS.
 - Verify public keys match between witness and network configs
 
 **"Invalid BLS public key"**
-- BLS public keys are 48 bytes (96 hex chars), not 32 bytes
+- BLS public keys are 96 bytes (192 hex chars), not 32 bytes
 - Re-run setup.sh to generate fresh keys
 
 **Gateway not aggregating**

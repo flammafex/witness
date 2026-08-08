@@ -74,7 +74,8 @@ pub struct WitnessSignature {
     /// ID of the witness that signed
     pub witness_id: String,
 
-    /// Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
+    /// Signature bytes (Ed25519 64 bytes or BLS 48 bytes / 96 lowercase hex
+    /// characters, depending on network configuration).
     #[serde(with = "crate::serde_hex::vec")]
     #[schemars(with = "String")]
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
@@ -138,7 +139,8 @@ pub struct WitnessInfo {
     /// Unique identifier for this witness
     pub id: String,
 
-    /// Ed25519 public key (hex encoded)
+    /// Public key (Ed25519 32 bytes or BLS 96 bytes / 192 lowercase hex
+    /// characters, hex encoded).
     pub pubkey: String,
 
     /// HTTP endpoint for this witness
@@ -183,35 +185,157 @@ pub struct NetworkConfig {
 
 impl NetworkConfig {
     pub fn validate(&self) -> crate::Result<()> {
-        if self.witnesses.is_empty() {
-            return Err(crate::WitnessError::InvalidPublicKey(
-                "No witnesses configured".to_string(),
-            ));
-        }
+        self.verification_config().map(|_| ())
+    }
 
-        if self.threshold == 0 || self.threshold > self.witnesses.len() {
-            return Err(crate::WitnessError::InsufficientSignatures {
-                got: 0,
-                required: self.threshold,
-            });
-        }
-
-        if self.signature_scheme == crate::signature_scheme::SignatureScheme::BLS {
-            for witness in &self.witnesses {
-                crate::decode_bls_public_key(&witness.pubkey).map_err(|e| {
-                    crate::WitnessError::InvalidPublicKey(format!(
-                        "Witness '{}': {}",
-                        witness.id, e
-                    ))
-                })?;
-            }
-        }
-
-        Ok(())
+    /// Project the operational configuration into the public trust anchor used
+    /// by all offline verification paths.  This projection is intentionally
+    /// explicit so endpoints, witness bearer tokens, inbound federation
+    /// secrets, and external-anchor provider configuration cannot cross the
+    /// verification boundary.
+    pub fn verification_config(&self) -> crate::Result<NetworkVerificationConfig> {
+        let config = NetworkVerificationConfig {
+            id: self.id.clone(),
+            witnesses: self
+                .witnesses
+                .iter()
+                .map(|witness| VerificationWitnessInfo {
+                    id: witness.id.clone(),
+                    pubkey: witness.pubkey.clone(),
+                })
+                .collect(),
+            threshold: self.threshold,
+            signature_scheme: self.signature_scheme,
+            federation: crate::federation::FederationVerificationConfig {
+                enabled: self.federation.enabled,
+                peer_networks: self
+                    .federation
+                    .peer_networks
+                    .iter()
+                    .map(|peer| crate::federation::PeerNetworkVerificationInfo {
+                        id: peer.id.clone(),
+                        gateway: peer.gateway.clone(),
+                        min_witnesses: peer.min_witnesses,
+                    })
+                    .collect(),
+                cross_anchor_threshold: self.federation.cross_anchor_threshold,
+            },
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn find_witness(&self, id: &str) -> Option<&WitnessInfo> {
         self.witnesses.iter().find(|w| w.id == id)
+    }
+}
+
+/// Public witness identity used by a [`NetworkVerificationConfig`].
+///
+/// Unlike [`WitnessInfo`], this DTO has no endpoint or authentication token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct VerificationWitnessInfo {
+    /// Unique witness identifier.
+    pub id: String,
+
+    /// Public key (Ed25519 32 bytes or BLS 96 bytes / 192 lowercase hex
+    /// characters, hex encoded).
+    pub pubkey: String,
+}
+
+/// Compatibility alias for the public witness verification DTO.
+pub type NetworkVerificationWitness = VerificationWitnessInfo;
+
+/// Secret-free trust anchor for verifying attestations, STHs, and proof
+/// bundles.  Operator `network.json` files are intentionally accepted as a
+/// superset when deserializing this type: unknown operational fields are
+/// ignored by serde, allowing offline tools to load existing files without
+/// exposing those fields in the verification model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct NetworkVerificationConfig {
+    /// Network identifier pinned into signed attestations.
+    pub id: String,
+
+    /// Witness identities and public keys.
+    pub witnesses: Vec<VerificationWitnessInfo>,
+
+    /// Minimum number of witness signatures required.
+    pub threshold: usize,
+
+    /// Signature scheme used by this network.
+    #[serde(default)]
+    pub signature_scheme: crate::signature_scheme::SignatureScheme,
+
+    /// Public federation discovery and policy.
+    #[serde(default)]
+    pub federation: crate::federation::FederationVerificationConfig,
+}
+
+impl NetworkVerificationConfig {
+    /// Validate every invariant needed before using this config as a trust
+    /// anchor.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.id.trim().is_empty() {
+            return Err(crate::WitnessError::InvalidVerificationConfig(
+                "network id must be nonempty".to_string(),
+            ));
+        }
+        if self.witnesses.is_empty() {
+            return Err(crate::WitnessError::InvalidVerificationConfig(
+                "at least one witness is required".to_string(),
+            ));
+        }
+        if self.threshold == 0 || self.threshold > self.witnesses.len() {
+            return Err(crate::WitnessError::InvalidVerificationConfig(format!(
+                "threshold {} must be between 1 and {}",
+                self.threshold,
+                self.witnesses.len()
+            )));
+        }
+
+        let mut witness_ids = std::collections::HashSet::new();
+        let mut decoded_keys = std::collections::HashSet::new();
+        for witness in &self.witnesses {
+            if witness.id.trim().is_empty() {
+                return Err(crate::WitnessError::InvalidVerificationConfig(
+                    "witness id must be nonempty".to_string(),
+                ));
+            }
+            if !witness_ids.insert(witness.id.clone()) {
+                return Err(crate::WitnessError::InvalidVerificationConfig(format!(
+                    "duplicate witness id '{}'",
+                    witness.id
+                )));
+            }
+
+            let decoded = match self.signature_scheme {
+                crate::signature_scheme::SignatureScheme::Ed25519 => {
+                    crate::decode_public_key(&witness.pubkey)?
+                        .to_bytes()
+                        .to_vec()
+                }
+                crate::signature_scheme::SignatureScheme::BLS => {
+                    crate::decode_bls_public_key(&witness.pubkey)?
+                        .to_bytes()
+                        .to_vec()
+                }
+            };
+            if !decoded_keys.insert(decoded) {
+                return Err(crate::WitnessError::InvalidVerificationConfig(format!(
+                    "duplicate decoded public key for witness '{}'",
+                    witness.id
+                )));
+            }
+        }
+
+        self.federation.validate(&self.id)
+    }
+
+    /// Look up a public witness identity by ID.
+    pub fn find_witness(&self, id: &str) -> Option<&VerificationWitnessInfo> {
+        self.witnesses.iter().find(|witness| witness.id == id)
     }
 }
 
@@ -492,12 +616,17 @@ mod tests {
 
     #[test]
     fn test_network_config_validation() {
+        let valid_pubkey = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[1u8; 32])
+                .verifying_key()
+                .as_bytes(),
+        );
         // Valid config
         let config = NetworkConfig {
             id: "test".to_string(),
             witnesses: vec![WitnessInfo {
                 id: "w1".to_string(),
-                pubkey: "abc123".to_string(),
+                pubkey: valid_pubkey.clone(),
                 endpoint: "http://localhost:3001".to_string(),
                 auth_token: Some("token-1".to_string()),
             }],
@@ -528,7 +657,7 @@ mod tests {
             id: "test".to_string(),
             witnesses: vec![WitnessInfo {
                 id: "w1".to_string(),
-                pubkey: "abc123".to_string(),
+                pubkey: valid_pubkey,
                 endpoint: "http://localhost:3001".to_string(),
                 auth_token: Some("token-1".to_string()),
             }],
@@ -540,6 +669,162 @@ mod tests {
         };
 
         assert!(bad_threshold.validate().is_err());
+    }
+
+    #[test]
+    fn verification_config_projects_only_public_fields() {
+        let mut config = sample_config_with_tokens();
+        config.witnesses[0].pubkey = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[2u8; 32])
+                .verifying_key()
+                .as_bytes(),
+        );
+        config.witnesses[1].pubkey = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[3u8; 32])
+                .verifying_key()
+                .as_bytes(),
+        );
+        config
+            .federation
+            .peer_networks
+            .push(crate::federation::PeerNetworkInfo {
+                id: "peer".to_string(),
+                gateway: "https://peer.example".to_string(),
+                min_witnesses: 1,
+                auth_token: Some("peer-secret".to_string()),
+            });
+        config.federation.inbound_auth_token = Some("inbound-secret".to_string());
+        config.external_anchors.enabled = true;
+        config
+            .external_anchors
+            .providers
+            .push(crate::external_anchors::AnchorProviderConfig {
+                provider_type: crate::external_anchors::AnchorProviderType::Trillian,
+                enabled: true,
+                priority: 1,
+                config: serde_json::json!({"api_key": "provider-secret"}),
+            });
+
+        let projected = config.verification_config().unwrap();
+        let json = serde_json::to_string(&projected).unwrap();
+        assert!(!json.contains("endpoint"));
+        assert!(!json.contains("auth_token"));
+        assert!(!json.contains("inbound-secret"));
+        assert!(!json.contains("provider-secret"));
+        assert!(json.contains("peer.example"));
+        assert!(serde_json::from_str::<NetworkVerificationConfig>(&json).is_ok());
+
+        // Existing operator files are accepted as a superset for offline use;
+        // their operational fields are ignored by the verification DTO.
+        let operator_json = serde_json::to_string(&config).unwrap();
+        let parsed_operator: NetworkVerificationConfig =
+            serde_json::from_str(&operator_json).unwrap();
+        assert_eq!(parsed_operator.id, config.id);
+        assert_eq!(parsed_operator.witnesses.len(), config.witnesses.len());
+    }
+
+    #[test]
+    fn verification_config_rejects_invalid_invariants() {
+        let key_a = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[4u8; 32])
+                .verifying_key()
+                .as_bytes(),
+        );
+        let key_b = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[5u8; 32])
+                .verifying_key()
+                .as_bytes(),
+        );
+        let base = NetworkVerificationConfig {
+            id: "net".to_string(),
+            witnesses: vec![
+                VerificationWitnessInfo {
+                    id: "w1".to_string(),
+                    pubkey: key_a.clone(),
+                },
+                VerificationWitnessInfo {
+                    id: "w2".to_string(),
+                    pubkey: key_b,
+                },
+            ],
+            threshold: 1,
+            signature_scheme: crate::SignatureScheme::Ed25519,
+            federation: Default::default(),
+        };
+        assert!(base.validate().is_ok());
+
+        for threshold in [0, 3] {
+            let invalid = NetworkVerificationConfig {
+                threshold,
+                ..base.clone()
+            };
+            assert!(invalid.validate().is_err());
+        }
+
+        let duplicate_id = NetworkVerificationConfig {
+            witnesses: vec![
+                base.witnesses[0].clone(),
+                VerificationWitnessInfo {
+                    id: "w1".to_string(),
+                    pubkey: base.witnesses[1].pubkey.clone(),
+                },
+            ],
+            ..base.clone()
+        };
+        assert!(duplicate_id.validate().is_err());
+
+        let duplicate_key = NetworkVerificationConfig {
+            witnesses: vec![
+                base.witnesses[0].clone(),
+                VerificationWitnessInfo {
+                    id: "w2".to_string(),
+                    pubkey: base.witnesses[0].pubkey.clone(),
+                },
+            ],
+            ..base.clone()
+        };
+        assert!(duplicate_key.validate().is_err());
+
+        let invalid_scheme_key = NetworkVerificationConfig {
+            witnesses: vec![VerificationWitnessInfo {
+                id: "w1".to_string(),
+                pubkey: "not-hex".to_string(),
+            }],
+            ..base.clone()
+        };
+        assert!(invalid_scheme_key.validate().is_err());
+
+        let mut with_peer = base.clone();
+        with_peer.federation = crate::federation::FederationVerificationConfig {
+            enabled: true,
+            cross_anchor_threshold: 1,
+            peer_networks: vec![crate::federation::PeerNetworkVerificationInfo {
+                id: "peer".to_string(),
+                gateway: "https://peer.example".to_string(),
+                min_witnesses: 1,
+            }],
+        };
+        assert!(with_peer.validate().is_ok());
+        for gateway in [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+            "http://example.com",
+            "https://user:pass@example.com",
+            "https://example.com/path?token=secret",
+            "https://example.com/path#fragment",
+        ] {
+            let mut invalid_url = with_peer.clone();
+            invalid_url.federation.peer_networks[0].gateway = gateway.to_string();
+            let valid = matches!(
+                gateway,
+                "http://localhost:8080"
+                    | "http://127.0.0.1:8080"
+                    | "http://[::1]:8080"
+                    | "https://peer.example"
+            );
+            assert_eq!(invalid_url.validate().is_ok(), valid, "gateway {gateway}");
+        }
     }
 
     #[test]

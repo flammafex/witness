@@ -11,6 +11,7 @@ Witness aims to provide:
   time
 - content privacy by accepting hashes instead of user content
 - public verification of attestations against a network configuration
+- secret-free distribution of the public verification configuration
 - append-only log proofs for light clients and auditors
 - optional cross-network federation and external anchoring for independent
   durability
@@ -44,6 +45,7 @@ Important assets include:
 - Freebird verifier configuration and trusted issuer policy
 - admin API keys, metrics tokens, and WebSocket tokens
 - release artifacts and container image provenance
+- published SDK contents and dependency metadata
 
 ## Actors
 
@@ -62,6 +64,10 @@ Important assets include:
 ## Assumptions
 
 - Clients verify returned attestations against the correct network config.
+- `GET /v1/network` is treated as a source for a secret-free
+  `NetworkVerificationConfig`; `/v1/config` is informational and is not a trust
+  anchor. Clients pin or independently review verification configs when a
+  stronger trust anchor is required.
 - Witness signing keys are generated with a secure RNG and stored on protected
   hosts.
 - Witness bearer tokens are high entropy and not reused across unrelated
@@ -89,6 +95,39 @@ may still observe:
 
 Freebird can make request eligibility unlinkable from issuance, but it does not
 hide transport metadata by itself.
+
+## SDK Wire and Release Controls
+
+The TypeScript SDK uses `lossless-json` for HTTP responses, request bodies,
+WebSocket events, and WASM JSON inputs. Generated Rust `u64` fields are
+`number | bigint`; safe integers remain numbers while larger exact values
+through `u64::MAX` remain exact bigints. Unsafe JavaScript numbers and invalid
+u64 values are rejected. This prevents precision loss from changing a signed
+attestation or log position before local verification. The explicit
+`AttestationSignatures` decoder rejects partial and ambiguous multi-sig/BLS
+union shapes rather than relying on implicit JSON-schema coercion.
+
+Hash values emitted or echoed by the SDK are canonical lowercase hex. This is a
+representation guarantee, not a substitute for cryptographic verification.
+WebSocket `auth_required` challenges without a token stop reconnecting and
+raise `AuthRequiredError`; authenticated connections reply within the server
+window, and close/abort cancels reconnect timers.
+
+The npm package is public but pre-1.0 and unaudited. Its release gate runs
+build, tests, typecheck, the authoritative generation-drift script, and
+`npm pack --dry-run`; the dry-run file list must be reviewed for secrets,
+generated local state, and missing WASM. Publishing does not imply a security
+audit or Byzantine-fault tolerance.
+
+## Federation Security Boundaries
+
+Federation adds independently signed cross-anchors for batch roots. A
+`Federated` verification result requires valid signatures from the configured
+peer networks, the configured peer threshold, and caller-supplied peer
+`NetworkVerificationConfig`s. Missing or unavailable peers reduce the achieved
+verification level. Federation improves independent durability, but does not
+provide Byzantine consensus or protect against collusion by enough witnesses or
+operators.
 
 ## Replay And Abuse Model
 

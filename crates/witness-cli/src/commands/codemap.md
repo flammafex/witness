@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Per-subcommand implementations for the `witness` CLI. Each module formats user input, calls `WitnessClient`, and prints `json` or `text` output. **Clients only — no signing.** `attest` additionally computes SHA-256 over a file; verification commands run `witness-core` crypto locally against fetched or file-supplied `NetworkConfig`s.
+Per-subcommand implementations for the `witness` CLI. Each module formats user input, calls `WitnessClient`, and prints `json` or `text` output. **Clients only — no signing.** `attest` additionally computes SHA-256 over a file; verification commands run `witness-core` crypto locally against fetched or file-supplied `NetworkVerificationConfig`s.
 
 ### `attest` — `timestamp.rs`
 
@@ -19,7 +19,7 @@ Per-subcommand implementations for the `witness` CLI. Each module formats user i
 ### `verify` — `verify.rs`
 
 - **Args**: positional attestation JSON file, `--output`.
-- **Route**: `GET /v1/network` (fetch `NetworkConfig`) via `WitnessClient::get_network_config()`; the signed attestation itself is read from the local file.
+- **Route**: `GET /v1/network` (fetch secret-free `NetworkVerificationConfig`) via `WitnessClient::network()`; the signed attestation itself is read from the local file.
 - **Behavior**: parses a `SignedAttestation` from file, then **locally** verifies via `witness_core::verify_signed_attestation(&attestation, &config)`; prints valid/invalid verdict with `verified vs threshold` signature counts. Exit code 1 on invalid.
 
 ### `config` — inline in `main.rs`
@@ -48,5 +48,5 @@ Per-subcommand implementations for the `witness` CLI. Each module formats user i
 ### `verify-proof` — `verify_proof.rs`
 
 - **Args**: `--bundle <file>` xor `--hash`; `--network-config <file>` or `--online` (mutually exclusive intent); repeatable `--peer-config <file>`; `--output`.
-- **Routes**: bundle from `GET /v1/bundle/{hash}` (or a local file); home config from `GET /v1/network` (or `--network-config` file); in `--online` mode, missing peer configs referenced by `bundle.cross_anchors` are fetched from each peer's gateway via `GET /v1/network` (`WitnessClient::get_network_config_from`).
+- **Routes**: bundle from `GET /v1/bundle/{hash}` (or a local file); home config from `GET /v1/network` (or `--network-config` file); in `--online` mode, missing peer configs referenced by `bundle.cross_anchors` are fetched from each peer's gateway via `GET /v1/network` (`WitnessClient::network_from`).
 - **Behavior**: assembles `ProofVerificationConfig { network, peers }` and **locally** runs `witness_core::verify_proof_bundle(&bundle, &config)` — verifying threshold signatures, Merkle batch inclusion, cross-anchors, and reporting external-anchor presence and an assurance `level`. Failing verification exits 1. Supports fully offline verification from files.

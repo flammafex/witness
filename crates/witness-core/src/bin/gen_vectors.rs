@@ -644,6 +644,13 @@ fn wire_vectors() -> Value {
     let malformed_empty = json!({});
     let malformed_partial_aggregated = json!({ "signature": "deadbeef" });
     let malformed_partial_multisig = json!({ "signatures": "not-an-array" });
+    let malformed_multisig_plus_signature = json!({ "signatures": [], "signature": "deadbeef" });
+    let malformed_multisig_plus_signers = json!({ "signatures": [], "signers": ["w1"] });
+    let malformed_aggregate_plus_signatures = json!({
+        "signature": "deadbeef",
+        "signers": ["w1"],
+        "signatures": []
+    });
     let malformed_bad_hex = json!({
         "signatures": [ { "witness_id": "w1", "signature": "ZZ" } ]
     });
@@ -697,6 +704,9 @@ fn wire_vectors() -> Value {
             { "name": "empty", "json": malformed_empty.to_string(), "expect": "reject" },
             { "name": "partial_aggregated", "json": malformed_partial_aggregated.to_string(), "expect": "reject" },
             { "name": "partial_multisig", "json": malformed_partial_multisig.to_string(), "expect": "reject" },
+            { "name": "multisig_plus_signature", "json": malformed_multisig_plus_signature.to_string(), "expect": "reject" },
+            { "name": "multisig_plus_signers", "json": malformed_multisig_plus_signers.to_string(), "expect": "reject" },
+            { "name": "aggregate_plus_signatures", "json": malformed_aggregate_plus_signatures.to_string(), "expect": "reject" },
             { "name": "bad_hex", "json": malformed_bad_hex.to_string(), "expect": "reject" },
             { "name": "ambiguous_both_shapes", "json": ambiguous.to_string(), "expect": "reject" }
         ],

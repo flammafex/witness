@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::Duration;
-use witness_core::{LogConsistencyProof, NetworkConfig, SignedTreeHead};
+use witness_core::{LogConsistencyProof, NetworkVerificationConfig, SignedTreeHead};
 
 pub struct GatewayClient {
     client: Client,
@@ -23,8 +23,8 @@ impl GatewayClient {
         }
     }
 
-    /// Fetch the gateway's current network configuration.
-    pub async fn get_network_config(&self) -> Result<NetworkConfig> {
+    /// Fetch the gateway's current secret-free verification configuration.
+    pub async fn get_network_config(&self) -> Result<NetworkVerificationConfig> {
         let url = format!("{}/v1/network", self.gateway_url);
         let response = self
             .client

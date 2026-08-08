@@ -22,6 +22,8 @@ export type VerificationFailureReason =
   | 'duplicate-signer'
   | 'unknown-witness'
   | 'bad-signature'
+  | 'invalid-config'
+  | 'wrong-network'
   | 'index-size-mismatch'
   | 'ambiguous-signature-encoding';
 
@@ -40,6 +42,20 @@ export class WitnessError extends Error {
 export class TransportError extends WitnessError {
   constructor(message: string, options?: ErrorOptions) {
     super('transport', message, options);
+  }
+}
+
+/** A request exceeded its transport deadline. */
+export class TimeoutError extends TransportError {
+  constructor(message = 'request timed out') {
+    super(message);
+  }
+}
+
+/** A request or subscription was stopped by an AbortSignal. */
+export class AbortError extends TransportError {
+  constructor(message = 'operation aborted', options?: ErrorOptions) {
+    super(message, options);
   }
 }
 

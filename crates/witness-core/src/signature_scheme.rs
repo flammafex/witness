@@ -37,7 +37,7 @@ pub enum AttestationSignatures {
 
     /// BLS aggregated signature (single signature from multiple witnesses)
     Aggregated {
-        /// Aggregated BLS signature
+        /// Aggregated BLS signature (48 bytes / 96 lowercase hex characters).
         #[serde(with = "crate::serde_hex::vec")]
         #[schemars(with = "String")]
         #[cfg_attr(feature = "openapi", schema(value_type = String))]

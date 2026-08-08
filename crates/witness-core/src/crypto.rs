@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 use crate::{
-    signature_scheme::AttestationSignatures, Attestation, NetworkConfig, Result, SignatureScheme,
-    SignedAttestation, WitnessError,
+    signature_scheme::AttestationSignatures, Attestation, NetworkVerificationConfig, Result,
+    SignatureScheme, SignedAttestation, WitnessError,
 };
 
 /// Generate a new Ed25519 keypair
@@ -42,8 +42,16 @@ pub fn verify_signature(
 /// Verify a complete signed attestation against network config
 pub fn verify_signed_attestation(
     signed: &SignedAttestation,
-    config: &NetworkConfig,
+    config: &NetworkVerificationConfig,
 ) -> Result<usize> {
+    config.validate()?;
+    if signed.attestation.network_id != config.id {
+        return Err(WitnessError::NetworkIdMismatch {
+            expected: config.id.clone(),
+            actual: signed.attestation.network_id.clone(),
+        });
+    }
+
     match (&signed.signatures, &config.signature_scheme) {
         // Ed25519 multi-sig verification
         (AttestationSignatures::MultiSig { signatures }, SignatureScheme::Ed25519) => {
@@ -70,14 +78,7 @@ pub fn verify_signed_attestation(
                     .ok_or_else(|| WitnessError::WitnessNotFound(witness_sig.witness_id.clone()))?;
 
                 // Decode public key
-                let pubkey_bytes = hex::decode(&witness_info.pubkey)
-                    .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
-
-                let verifying_key =
-                    VerifyingKey::from_bytes(pubkey_bytes.as_slice().try_into().map_err(|_| {
-                        WitnessError::InvalidPublicKey("Invalid key length".to_string())
-                    })?)
-                    .map_err(|e| WitnessError::InvalidPublicKey(e.to_string()))?;
+                let verifying_key = crate::decode_public_key(&witness_info.pubkey)?;
 
                 // Verify signature
                 if verify_signature(&signed.attestation, &witness_sig.signature, &verifying_key)
@@ -176,22 +177,18 @@ pub fn decode_public_key(hex_str: &str) -> Result<VerifyingKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AttestationSignatures, SignedAttestation, WitnessInfo, WitnessSignature};
+    use crate::{AttestationSignatures, SignedAttestation, WitnessSignature};
 
-    fn test_network_config(pubkey: String) -> NetworkConfig {
-        NetworkConfig {
+    fn test_network_config(pubkey: String) -> NetworkVerificationConfig {
+        NetworkVerificationConfig {
             id: "test-net".to_string(),
-            witnesses: vec![WitnessInfo {
+            witnesses: vec![crate::VerificationWitnessInfo {
                 id: "w1".to_string(),
                 pubkey,
-                endpoint: "http://localhost:3001".to_string(),
-                auth_token: Some("token-1".to_string()),
             }],
             threshold: 1,
             signature_scheme: SignatureScheme::Ed25519,
             federation: Default::default(),
-            external_anchors: Default::default(),
-            federation_peers: vec![],
         }
     }
 
@@ -258,6 +255,29 @@ mod tests {
         assert!(matches!(
             verify_signed_attestation(&signed, &config),
             Err(WitnessError::DuplicateSigner(id)) if id == "w1"
+        ));
+    }
+
+    #[test]
+    fn test_reject_attestation_from_wrong_network() {
+        let (signing_key, verifying_key) = generate_keypair();
+        let attestation = Attestation::new([1; 32], "other-net".to_string(), 1);
+        let signature = sign_attestation(&attestation, &signing_key);
+        let config = test_network_config(encode_public_key(&verifying_key));
+        let signed = SignedAttestation {
+            attestation,
+            signatures: AttestationSignatures::MultiSig {
+                signatures: vec![WitnessSignature {
+                    witness_id: "w1".to_string(),
+                    signature,
+                }],
+            },
+        };
+
+        assert!(matches!(
+            verify_signed_attestation(&signed, &config),
+            Err(WitnessError::NetworkIdMismatch { expected, actual })
+                if expected == "test-net" && actual == "other-net"
         ));
     }
 }

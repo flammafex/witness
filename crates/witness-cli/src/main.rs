@@ -97,11 +97,12 @@ enum Commands {
         #[arg(long, conflicts_with = "bundle")]
         hash: Option<String>,
 
-        /// Path to the home network's NetworkConfig JSON (offline verification)
+        /// Path to the home network's verification config JSON (offline verification;
+        /// existing operator network.json files are accepted)
         #[arg(long)]
         network_config: Option<String>,
 
-        /// Path(s) to peer NetworkConfig JSON files for cross-anchor verification
+        /// Path(s) to peer verification config JSON files for cross-anchor verification
         /// (repeatable; can be combined with --online to fall back to fetching)
         #[arg(long = "peer-config")]
         peer_config: Vec<String>,

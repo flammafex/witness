@@ -18,7 +18,7 @@ use witness_core::{
 
 // Types referenced only by the (feature-gated) `#[utoipa::path]` annotations.
 #[cfg(feature = "openapi")]
-use witness_core::{NetworkConfig, SignedTreeHead};
+use witness_core::{NetworkVerificationConfig, SignedTreeHead};
 
 use super::{AttestationState, CoreState, FederationState, MetricsState};
 use crate::epoch::epoch_secs;
@@ -70,19 +70,19 @@ pub(super) async fn config_handler(State(state): State<CoreState>) -> impl IntoR
     })
 }
 
-/// Return the full [`NetworkConfig`] (witnesses, threshold, signature scheme,
-/// federation peers, external anchor providers) for offline verification of
-/// proof bundles.  Auth tokens are omitted via `#[serde(skip_serializing)]`
-/// on the relevant fields.
+/// Return the secret-free public verification configuration for offline
+/// verification of attestations, STHs, and proof bundles.  This is an explicit
+/// projection of the operational [`NetworkConfig`] and never serializes
+/// endpoints, bearer tokens, inbound federation secrets, or anchor providers.
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/v1/network",
     responses(
-        (status = 200, description = "Full network configuration with witness public keys (auth tokens stripped server-side)", body = NetworkConfig)
+        (status = 200, description = "Secret-free public verification configuration", body = NetworkVerificationConfig)
     )
 ))]
 pub(super) async fn network_config_handler(State(state): State<CoreState>) -> impl IntoResponse {
-    Json((*state.config).clone())
+    Json((*state.verification_config).clone())
 }
 
 /// Decode a hex-encoded SHA-256 hash from a path/query parameter into a
@@ -91,6 +91,14 @@ pub(super) async fn network_config_handler(State(state): State<CoreState>) -> im
 pub(super) fn decode_hash(hash: &str) -> Result<[u8; 32], AppError> {
     let hash_bytes = hex::decode(hash).map_err(|_| AppError::InvalidHash)?;
     hash_bytes.try_into().map_err(|_| AppError::InvalidHash)
+}
+
+fn attestation_created_event(hash: [u8; 32], timestamp: u64) -> AttestationEvent {
+    AttestationEvent {
+        event_type: "attestation".to_string(),
+        hash: hex::encode(hash),
+        timestamp,
+    }
 }
 
 /// Rebuild the merkle tree over a batch's stored leaves and produce the
@@ -150,18 +158,19 @@ pub(super) async fn verify_handler(
         hex::encode(request.attestation.attestation.hash)
     );
 
-    match witness_core::verify_signed_attestation(&request.attestation, &state.config) {
+    match witness_core::verify_signed_attestation(&request.attestation, &state.verification_config)
+    {
         Ok(verified_count) => {
             let message = format!(
                 "Valid: {} of {} signatures verified, {} required",
                 verified_count,
-                state.config.witnesses.len(),
-                state.config.threshold
+                state.verification_config.witnesses.len(),
+                state.verification_config.threshold
             );
             Ok(Json(VerifyResponse {
                 valid: true,
                 verified_signatures: verified_count,
-                required_signatures: state.config.threshold,
+                required_signatures: state.verification_config.threshold,
                 message,
             }))
         }
@@ -170,7 +179,7 @@ pub(super) async fn verify_handler(
             Ok(Json(VerifyResponse {
                 valid: false,
                 verified_signatures: 0,
-                required_signatures: state.config.threshold,
+                required_signatures: state.verification_config.threshold,
                 message: "Signature verification failed".to_string(),
             }))
         }
@@ -236,6 +245,7 @@ pub(super) async fn get_proof_handler(
     tracing::debug!("Looking up merkle proof for hash: {}", hash);
 
     let hash_array = decode_hash(&hash)?;
+    let canonical_hash = hex::encode(hash_array);
     let job = state
         .storage
         .get_job(&hash_array)
@@ -247,7 +257,7 @@ pub(super) async fn get_proof_handler(
 
     let batch_info = state
         .storage
-        .get_attestation_batch_info(&hash)
+        .get_attestation_batch_info(&canonical_hash)
         .await?
         .ok_or(AppError::NotBatched)?;
 
@@ -256,7 +266,7 @@ pub(super) async fn get_proof_handler(
     let proof = build_merkle_inclusion_proof(&state.storage, batch_id, merkle_index).await?;
 
     Ok(Json(MerkleProofResponse {
-        hash,
+        hash: canonical_hash,
         proof: proof.siblings.iter().map(hex::encode).collect(),
         index: merkle_index,
         merkle_root: hex::encode(merkle_root),
@@ -288,6 +298,7 @@ pub(super) async fn get_proof_bundle_handler(
     tracing::debug!("Building proof bundle for hash: {}", hash);
 
     let hash_array = decode_hash(&hash)?;
+    let canonical_hash = hex::encode(hash_array);
 
     let job = state
         .storage
@@ -300,8 +311,10 @@ pub(super) async fn get_proof_bundle_handler(
     let mut cross_anchors = Vec::new();
     let mut external_anchors = Vec::new();
 
-    if let Some((batch_id, merkle_index, merkle_root)) =
-        state.storage.get_attestation_batch_info(&hash).await?
+    if let Some((batch_id, merkle_index, merkle_root)) = state
+        .storage
+        .get_attestation_batch_info(&canonical_hash)
+        .await?
     {
         let batch = state
             .storage
@@ -586,11 +599,7 @@ pub(super) async fn create_attestation_handler(
     let reservation = reservation_result?;
 
     if reservation.created {
-        let event = AttestationEvent {
-            event_type: "attestation".to_string(),
-            hash: request.hash,
-            timestamp: reservation.job.attestation.timestamp,
-        };
+        let event = attestation_created_event(hash, reservation.job.attestation.timestamp);
         let _ = state.event_tx.send(event);
     }
 
@@ -716,4 +725,19 @@ pub(super) async fn metrics_handler(
         }
     }
     state.handle.render().into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{attestation_created_event, decode_hash};
+
+    #[test]
+    fn created_event_hash_is_canonical_for_uppercase_input() {
+        let input = "A591A6D40BF420404A011733CFB7B190D62C65BF0BCDA32B57B277D9AD9F146E";
+        let decoded = decode_hash(input).ok().unwrap();
+        let event = attestation_created_event(decoded, 123);
+
+        assert_eq!(event.hash, input.to_ascii_lowercase());
+        assert_eq!(event.timestamp, 123);
+    }
 }

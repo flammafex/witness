@@ -64,6 +64,21 @@
     },
     {
       "expect": "reject",
+      "json": "{\"signature\":\"deadbeef\",\"signatures\":[]}",
+      "name": "multisig_plus_signature"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signatures\":[],\"signers\":[\"w1\"]}",
+      "name": "multisig_plus_signers"
+    },
+    {
+      "expect": "reject",
+      "json": "{\"signature\":\"deadbeef\",\"signatures\":[],\"signers\":[\"w1\"]}",
+      "name": "aggregate_plus_signatures"
+    },
+    {
+      "expect": "reject",
       "json": "{\"signatures\":[{\"signature\":\"ZZ\",\"witness_id\":\"w1\"}]}",
       "name": "bad_hex"
     },

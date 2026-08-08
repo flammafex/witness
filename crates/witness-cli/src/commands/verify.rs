@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs;
-use witness_core::SignedAttestation;
+use witness_core::{NetworkVerificationConfig, SignedAttestation};
 
 use witness_client::WitnessClient;
 
@@ -20,7 +20,7 @@ pub async fn run(gateway_url: &str, file_path: &str, output_format: &str) -> Res
 
     // Fetch network config (contains public keys) for local verification
     let client = WitnessClient::new(gateway_url)?;
-    let config = client.network().await?;
+    let config: NetworkVerificationConfig = client.network().await?;
 
     // Verify locally using witness-core cryptographic verification
     let result = witness_core::verify_signed_attestation(&attestation, &config);

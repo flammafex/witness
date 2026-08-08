@@ -8,8 +8,8 @@
 
 - Single `[[bin]]` named `witness`; no library target. `clap` command tree under `Cli { gateway, command }` with the gateway URL configurable via `--gateway`/`-g` or the `WITNESS_GATEWAY` env var (default `http://localhost:8080`).
 - Subcommands: `attest`, `status`, `verify`, `config`, `anchors`, `log` (with `sth` and `consistency` sub-subcommands), and `verify-proof`. Each command is a thin module in `src/commands/` that formats user input, calls `WitnessClient`, and prints `text` or `json` output.
-- **`WitnessClient`** (`client.rs`) is a `reqwest` wrapper with a 30 s timeout — one method per gateway route, parsing responses into `witness-core` types. 404 on anchors is normalized to an empty list.
-- **Verification is local and trust-minimizing**: `verify`, `log --verify`, and `verify-proof` fetch the network's `NetworkConfig` (from gateway files or `--network-config`/`--peer-config` paths) and run `witness-core` cryptographic verification (`verify_signed_attestation`, `verify_signed_tree_head`, `verify_log_consistency`, `verify_proof_bundle`) — the gateway's answer is never trusted for the verdict.
+- **`WitnessClient`** (`client.rs`) is a `reqwest` wrapper with a 30 s timeout — one method per gateway route, parsing responses into `witness-core` types. 404 on anchors remains a typed `NotFound` error; a known but unbatched attestation returns `[]`.
+- **Verification is local and trust-minimizing**: `verify`, `log --verify`, and `verify-proof` use secret-free `NetworkVerificationConfig` values (from `/v1/network`, gateway files, or `--network-config`/`--peer-config` paths) and run `witness-core` cryptographic verification (`verify_signed_attestation`, `verify_signed_tree_head`, `verify_log_consistency`, `verify_proof_bundle`) — the gateway's answer is never trusted for the verdict.
 - `verify-proof` supports fully offline operation (bundle + network config + peer configs from files) and hybrid online mode (fetch home config and any missing peer configs referenced by cross-anchors from peer gateways).
 - Dev-dependency on `axum` to spin up mock gateways for route-contract tests.
 - A `tests` module asserts the CLI exposes the current command set (and rejects the legacy `timestamp`/`get` names).
@@ -24,6 +24,6 @@
 ## Integration
 
 - Talks **only** to the gateway's HTTP API: `POST /v1/attestations`, `GET /v1/attestations/{hash}`, `GET /v1/config`, `GET /v1/network`, `GET /v1/bundle/{hash}`, `GET /v1/log/sth`, `GET /v1/log/consistency?first=&second=`, `GET /v1/anchors/{hash}` (see `src/commands/codemap.md` for the per-command mapping).
-- Uses `witness-core` for all domain types (`AttestationJobResponse`, `CreateAttestationRequest`, `ProofBundle`, `NetworkConfig`, `SignedTreeHead`, `LogConsistencyProof`, `ExternalAnchorProof`, `FreebirdToken`) and all verification functions.
+- Uses `witness-core` for all domain types (`AttestationJobResponse`, `CreateAttestationRequest`, `ProofBundle`, `NetworkVerificationConfig`, `SignedTreeHead`, `LogConsistencyProof`, `ExternalAnchorProof`, `FreebirdToken`) and all verification functions.
 - Optional Freebird integration: a Freebird token JSON file passed to `attest` is embedded in `CreateAttestationRequest` for anonymous rate limiting.
 - The CLI never contacts witness nodes directly — it is a pure gateway client, like `witness-auditor`.

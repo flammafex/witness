@@ -82,7 +82,8 @@ fn ed25519_vectors() {
             signatures: AttestationSignatures::MultiSig { signatures },
         };
         let expect = case["expect"].as_str().unwrap();
-        let result = witness_core::verify_signed_attestation(&signed, &config);
+        let verification_config = config.verification_config().unwrap();
+        let result = witness_core::verify_signed_attestation(&signed, &verification_config);
         assert_expect(case["name"].as_str().unwrap(), expect, result);
     }
 }
@@ -240,7 +241,8 @@ fn sth_vectors() {
             external_anchors: Default::default(),
             federation_peers: vec![],
         };
-        let result = witness_core::verify_signed_tree_head(&sth, &config);
+        let verification_config = config.verification_config().unwrap();
+        let result = witness_core::verify_signed_tree_head(&sth, &verification_config);
         assert!(result.is_ok(), "{key} sth should verify: {result:?}");
     }
 }

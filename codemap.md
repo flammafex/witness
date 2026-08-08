@@ -31,7 +31,7 @@ Merkle/log/proof verification). Migrations are forward-only SQL compiled in via
 | `crates/witness-core/` | Shared trust root: all domain types, Ed25519 + BLS12-381 crypto, RFC 9162 Merkle/STH/log proof verification, federation cross-anchor + ProofBundle verification, canonical `Attestation::to_bytes()` signing message. Pure library, no keys or I/O. | [View Map](crates/witness-core/codemap.md) |
 | `crates/witness-node/` | Per-witness signing service: holds private key (zeroized on drop), threshold-signs attestation shares via `POST /v1/sign` behind constant-time bearer auth + per-IP rate limiting. | [View Map](crates/witness-node/codemap.md) |
 | `crates/witness-gateway/` | Main binary: public HTTP API, admission/dedupe, durable lease-based workers collecting + threshold-verifying witness signatures, batch Merkle closure, RFC 9162 STH issuance, federation cross-anchoring, external anchors, admin/metrics/WebSocket, optional Freebird rate limiting, SSRF-safe outbound HTTP. | [View Map](crates/witness-gateway/codemap.md) |
-| `crates/witness-cli/` | `witness` binary: pure gateway HTTP client — submits hashes, polls attestation jobs, locally verifies threshold-signed attestations and full proof bundles with witness-core crypto against fetched or offline NetworkConfigs. | [View Map](crates/witness-cli/codemap.md) |
+| `crates/witness-cli/` | `witness` binary: pure gateway HTTP client — submits hashes, polls attestation jobs, locally verifies threshold-signed attestations and full proof bundles with witness-core crypto against fetched or offline `NetworkVerificationConfig`s. | [View Map](crates/witness-cli/codemap.md) |
 | `crates/witness-auditor/` | Independent auditor continuously walking a gateway's RFC 9162 log: verifies STH threshold signatures + consistency proofs, persists every accepted STH and anomaly in SQLite so rollbacks survive restarts. No keys, no signing. | [View Map](crates/witness-auditor/codemap.md) |
 | `configs/` | Deployment + access-control config: `server/nginx.conf` reverse proxy with per-route IP allowlists (compensating control for gateway `CorsLayer::permissive()`), plus root Docker/compose/entrypoint assets. | [View Map](configs/codemap.md) |
 | `examples/` | Runnable example networks covering every feature variant (standard 3-witness, dual/triple gateway, `federation/` cross-anchoring, `bls/` aggregation) via a uniform setup → start → demo → stop lifecycle. | [View Map](examples/codemap.md) |
@@ -41,7 +41,7 @@ Merkle/log/proof verification). Migrations are forward-only SQL compiled in via
 
 ## Data & Control Flow
 
-1. Client posts a SHA-256 hash → gateway `POST /v1/timestamp` (or `/v1/attestations`).
+1. Client posts a SHA-256 hash → gateway `POST /v1/attestations`.
 2. Gateway admits/dedupes (optional Freebird token check), persists an attestation job (lease-based, recoverable across restarts).
 3. Gateway fans out to witness nodes → each threshold-signs an attestation share → gateway collects and threshold-verifies.
 4. Gateway closes batches, builds RFC 9162 Merkle trees, issues signed tree heads.

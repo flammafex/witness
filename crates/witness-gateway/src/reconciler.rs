@@ -109,14 +109,19 @@ impl AttestationWorker {
 
         match self.collect_verified_result(&claim.attestation).await {
             Ok(signed) => {
-                let verification = witness_core::verify_signed_attestation(&signed, &self.config)
-                    .context("final threshold verification failed")
-                    .and_then(|verified| {
-                        if verified < self.config.threshold {
-                            anyhow::bail!("final result below configured threshold");
-                        }
-                        Ok(())
-                    });
+                let verification_config = self
+                    .config
+                    .verification_config()
+                    .context("invalid verification configuration")?;
+                let verification =
+                    witness_core::verify_signed_attestation(&signed, &verification_config)
+                        .context("final threshold verification failed")
+                        .and_then(|verified| {
+                            if verified < self.config.threshold {
+                                anyhow::bail!("final result below configured threshold");
+                            }
+                            Ok(())
+                        });
                 if let Err(error) = verification {
                     return self.reschedule_claim(&claim, &error.to_string()).await;
                 }
@@ -904,7 +909,11 @@ mod tests {
             .signed_attestation
             .unwrap();
         assert!(signed.is_aggregated());
-        assert!(witness_core::verify_signed_attestation(&signed, &config).is_ok());
+        assert!(witness_core::verify_signed_attestation(
+            &signed,
+            &config.verification_config().unwrap()
+        )
+        .is_ok());
     }
 
     #[tokio::test]

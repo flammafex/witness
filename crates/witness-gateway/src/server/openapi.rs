@@ -9,16 +9,17 @@
 //! are intentionally excluded — they are auth-gated peer/ops surfaces, not
 //! part of the client SDK surface (spec §7.2–7.3).
 
+use utoipa::openapi::{schema::Object, OpenApi as OpenApiDocument, RefOr, Schema};
 use utoipa::OpenApi;
 
 use witness_core::types::{AttestationJobResponse, AttestationJobStatus, CreateAttestationRequest};
 use witness_core::{
     Attestation, AttestationBatch, AttestationSignatures, BatchInclusion, CrossAnchor,
-    ExternalAnchorProof, ExternalAnchorsConfig, FederationConfig, FreebirdToken,
-    LogConsistencyProof, LogInclusionProofResponse, MerkleProof, MerkleProofResponse,
-    NetworkConfig, NetworkConfigPublic, PeerNetworkInfo, ProofBundle, SignatureScheme,
-    SignedAttestation, SignedTreeHead, TreeHead, VerifyRequest, VerifyResponse, WitnessInfo,
-    WitnessSignature,
+    ExternalAnchorProof, FederationVerificationConfig, FreebirdToken, LogConsistencyProof,
+    LogInclusionProofResponse, MerkleProof, MerkleProofResponse, NetworkConfigPublic,
+    NetworkVerificationConfig, PeerNetworkVerificationInfo, ProofBundle, SignatureScheme,
+    SignedAttestation, SignedTreeHead, TreeHead, VerificationWitnessInfo, VerifyRequest,
+    VerifyResponse, WitnessSignature,
 };
 
 use super::routes::HealthResponse;
@@ -58,12 +59,11 @@ use super::routes::HealthResponse;
         schemas(
             HealthResponse,
             NetworkConfigPublic,
-            NetworkConfig,
-            WitnessInfo,
+            NetworkVerificationConfig,
+            VerificationWitnessInfo,
             SignatureScheme,
-            FederationConfig,
-            PeerNetworkInfo,
-            ExternalAnchorsConfig,
+            FederationVerificationConfig,
+            PeerNetworkVerificationInfo,
             CreateAttestationRequest,
             FreebirdToken,
             AttestationJobResponse,
@@ -100,9 +100,59 @@ use super::routes::HealthResponse;
 )]
 pub struct ApiDoc;
 
+/// Utoipa's schema model does not expose JSON Schema's `not` keyword. An empty
+/// enum is the equivalent always-failing property schema and lets the two
+/// untagged signature arms reject the other arm's discriminator keys while
+/// leaving unknown forward-compatible fields allowed.
+fn impossible_property_schema() -> RefOr<Schema> {
+    let mut object = Object::new();
+    object.enum_values = Some(Vec::new());
+    RefOr::T(Schema::Object(object))
+}
+
+fn harden_attestation_signatures_schema(document: &mut OpenApiDocument) {
+    let Some(components) = document.components.as_mut() else {
+        return;
+    };
+    let Some(RefOr::T(schema)) = components.schemas.get_mut("AttestationSignatures") else {
+        return;
+    };
+
+    let items = match schema {
+        Schema::AnyOf(any_of) => &mut any_of.items,
+        Schema::OneOf(one_of) => &mut one_of.items,
+        _ => return,
+    };
+
+    for arm in items {
+        let RefOr::T(Schema::Object(object)) = arm else {
+            continue;
+        };
+        if object.properties.contains_key("signatures") {
+            object
+                .properties
+                .entry("signature".to_string())
+                .or_insert_with(impossible_property_schema);
+            object
+                .properties
+                .entry("signers".to_string())
+                .or_insert_with(impossible_property_schema);
+        } else if object.properties.contains_key("signature")
+            && object.properties.contains_key("signers")
+        {
+            object
+                .properties
+                .entry("signatures".to_string())
+                .or_insert_with(impossible_property_schema);
+        }
+    }
+}
+
 /// Serialize the OpenAPI document to YAML.
 pub fn to_yaml() -> Result<String, Box<dyn std::error::Error>> {
-    Ok(ApiDoc::openapi().to_yaml()?)
+    let mut document = ApiDoc::openapi();
+    harden_attestation_signatures_schema(&mut document);
+    Ok(document.to_yaml()?)
 }
 
 #[cfg(all(test, feature = "openapi"))]
@@ -134,5 +184,53 @@ mod tests {
             "docs/openapi.yaml is out of date. Regenerate with:\n  \
              cargo run -p witness-gateway --bin gen_openapi --features openapi"
         );
+    }
+
+    #[test]
+    fn signature_schema_rejects_mixed_discriminator_keys() {
+        let mut document = ApiDoc::openapi();
+        harden_attestation_signatures_schema(&mut document);
+        let schema = document
+            .components
+            .as_ref()
+            .unwrap()
+            .schemas
+            .get("AttestationSignatures")
+            .unwrap();
+        let RefOr::T(schema) = schema else {
+            panic!("expected inline AttestationSignatures schema");
+        };
+        let items = match schema {
+            Schema::AnyOf(any_of) => &any_of.items,
+            Schema::OneOf(one_of) => &one_of.items,
+            _ => panic!("expected AttestationSignatures union schema"),
+        };
+        let RefOr::T(Schema::Object(multisig)) = &items[0] else {
+            panic!("expected multisig object schema");
+        };
+        let RefOr::T(Schema::Object(aggregate)) = &items[1] else {
+            panic!("expected aggregate object schema");
+        };
+        assert!(matches!(
+            multisig.properties.get("signature"),
+            Some(RefOr::T(Schema::Object(Object {
+                enum_values: Some(values),
+                ..
+            }))) if values.is_empty()
+        ));
+        assert!(matches!(
+            multisig.properties.get("signers"),
+            Some(RefOr::T(Schema::Object(Object {
+                enum_values: Some(values),
+                ..
+            }))) if values.is_empty()
+        ));
+        assert!(matches!(
+            aggregate.properties.get("signatures"),
+            Some(RefOr::T(Schema::Object(Object {
+                enum_values: Some(values),
+                ..
+            }))) if values.is_empty()
+        ));
     }
 }

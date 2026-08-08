@@ -33,8 +33,8 @@ use witness_core::{
         merkle_tree_hash as core_merkle_tree_hash, verify_consistency as merkle_verify_consistency,
         verify_inclusion as merkle_verify_inclusion,
     },
-    Attestation, AttestationSignatures, NetworkConfig, ProofBundle, ProofVerificationConfig,
-    SignedAttestation, SignedTreeHead, TreeHead, WitnessError,
+    Attestation, AttestationSignatures, NetworkVerificationConfig, ProofBundle,
+    ProofVerificationConfig, SignedAttestation, SignedTreeHead, TreeHead, WitnessError,
 };
 
 // ---------------------------------------------------------------------------
@@ -85,6 +85,8 @@ fn map_error(e: &WitnessError) -> (String, String) {
         WitnessError::InvalidSignature => "bad-signature",
         WitnessError::InsufficientSignatures { .. } => "sub-threshold",
         WitnessError::InvalidPublicKey(_) => "bad-signature",
+        WitnessError::InvalidVerificationConfig(_) => "invalid-config",
+        WitnessError::NetworkIdMismatch { .. } => "wrong-network",
         WitnessError::WitnessNotFound(_) => "unknown-witness",
         WitnessError::DuplicateSigner(_) => "duplicate-signer",
         _ => "bad-signature",
@@ -160,7 +162,7 @@ pub extern "C" fn verify_signed_attestation(
         Ok(v) => v,
         Err(e) => return set_err("ambiguous-signature-encoding", &e.to_string()),
     };
-    let config: NetworkConfig = match serde_json::from_str(&config_json) {
+    let config: NetworkVerificationConfig = match serde_json::from_str(&config_json) {
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
@@ -184,7 +186,7 @@ pub extern "C" fn verify_signed_tree_head(
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
-    let config: NetworkConfig = match serde_json::from_str(&config_json) {
+    let config: NetworkVerificationConfig = match serde_json::from_str(&config_json) {
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
@@ -208,7 +210,7 @@ pub extern "C" fn verify_log_consistency(
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
-    let config: NetworkConfig = match serde_json::from_str(&config_json) {
+    let config: NetworkVerificationConfig = match serde_json::from_str(&config_json) {
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
@@ -235,11 +237,11 @@ pub extern "C" fn verify_proof_bundle(
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
-    let network: NetworkConfig = match serde_json::from_str(&network_json) {
+    let network: NetworkVerificationConfig = match serde_json::from_str(&network_json) {
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };
-    let peers: Vec<NetworkConfig> = match serde_json::from_str(&peers_json) {
+    let peers: Vec<NetworkVerificationConfig> = match serde_json::from_str(&peers_json) {
         Ok(v) => v,
         Err(e) => return set_err("bad-signature", &e.to_string()),
     };

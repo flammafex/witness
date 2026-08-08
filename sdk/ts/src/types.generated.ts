@@ -29,6 +29,7 @@ export type WitnessWireTypes =
   | ExternalAnchorProof
   | ExternalAnchorsConfig
   | FederationConfig
+  | FederationVerificationConfig
   | FreebirdToken
   | LogConsistencyProof
   | LogInclusionProofResponse
@@ -36,7 +37,9 @@ export type WitnessWireTypes =
   | MerkleProofResponse
   | NetworkConfig
   | NetworkConfigPublic
+  | NetworkVerificationConfig
   | PeerNetworkInfo
+  | PeerNetworkVerificationInfo
   | ProofBundle
   | ProofBundleVerification
   | ProofVerificationConfig
@@ -46,7 +49,9 @@ export type WitnessWireTypes =
   | TimestampRequest
   | TimestampResponse
   | TreeHead
+  | U64
   | VerificationLevel
+  | VerificationWitnessInfo
   | VerifyRequest
   | VerifyResponse
   | WitnessInfo
@@ -60,13 +65,16 @@ export type AnchorProviderType = "internet_archive" | "trillian" | "dns_txt" | "
  */
 export type AttestationSignatures =
   | {
+      signature?: never;
       signatures: WitnessSignature[];
+      signers?: never;
     }
   | {
       /**
-       * Aggregated BLS signature
+       * Aggregated BLS signature (48 bytes / 96 lowercase hex characters).
        */
       signature: string;
+      signatures?: never;
       /**
        * List of witness IDs that participated
        */
@@ -92,6 +100,7 @@ export type VerificationLevel =
         peer_count: number;
       };
     };
+export type U64 = number | bigint;
 
 /**
  * Configuration for an external anchor provider
@@ -125,11 +134,11 @@ export interface Attestation {
   /**
    * Monotonic sequence number for ordering
    */
-  sequence: number;
+  sequence: U64;
   /**
    * Unix timestamp in seconds
    */
-  timestamp: number;
+  timestamp: U64;
 }
 /**
  * A batch of attestations with their merkle root
@@ -138,11 +147,11 @@ export interface AttestationBatch {
   /**
    * Number of attestations in this batch
    */
-  attestation_count: number;
+  attestation_count: U64;
   /**
    * Unique batch ID
    */
-  id: number;
+  id: U64;
   /**
    * Merkle root of all attestations in this batch
    */
@@ -154,18 +163,18 @@ export interface AttestationBatch {
   /**
    * End of batch period (Unix seconds)
    */
-  period_end: number;
+  period_end: U64;
   /**
    * Start of batch period (Unix seconds)
    */
-  period_start: number;
+  period_start: U64;
 }
 /**
  * Event broadcast to WebSocket clients when an attestation is created.
  */
 export interface AttestationEvent {
   hash: string;
-  timestamp: number;
+  timestamp: U64;
   type: string;
 }
 /**
@@ -183,7 +192,7 @@ export interface AttestationJobResponse {
   /**
    * Unix timestamp at which a pending/retryable job is next eligible.
    */
-  next_attempt_at?: number | null;
+  next_attempt_at?: U64 | null;
   signed_attestation?: SignedAttestation | null;
   status: AttestationJobStatus;
 }
@@ -202,7 +211,7 @@ export interface SignedAttestation {
  */
 export interface WitnessSignature {
   /**
-   * Signature bytes (Ed25519 64 bytes or BLS 96 bytes, depending on network configuration)
+   * Signature bytes (Ed25519 64 bytes or BLS 48 bytes / 96 lowercase hex characters, depending on network configuration).
    */
   signature: string;
   /**
@@ -228,7 +237,7 @@ export interface MerkleProof {
   /**
    * 0-based position of `leaf` in the log.  Renamed from `index` so callers are forced to update for the position-aware verifier.
    */
-  leaf_index: number;
+  leaf_index: U64;
   /**
    * Root hash of the tree at `tree_size`.  Carried for convenience; the verifier may also pass an externally trusted root and ignore this.
    */
@@ -240,7 +249,7 @@ export interface MerkleProof {
   /**
    * Total number of leaves in the tree this proof was generated against. Required to walk the unbalanced-split tree shape.
    */
-  tree_size: number;
+  tree_size: U64;
 }
 /**
  * Request to create or retrieve the canonical attestation job for a hash.
@@ -267,7 +276,7 @@ export interface FreebirdToken {
 /**
  * Cross-anchor attestation from a peer network.
  *
- * The peer network signs an [`Attestation`](crate::Attestation) whose `hash` is the cross-anchored batch's merkle root and whose `network_id` is the peer's own network ID.  This makes the cross-anchor a self-contained, independently verifiable threshold signature — clients can verify it against the peer's published [`NetworkConfig`] without trusting the originating gateway.
+ * The peer network signs an [`Attestation`](crate::Attestation) whose `hash` is the cross-anchored batch's merkle root and whose `network_id` is the peer's own network ID.  This makes the cross-anchor a self-contained, independently verifiable threshold signature — clients can verify it against the peer's published [`NetworkVerificationConfig`] without trusting the originating gateway.
  */
 export interface CrossAnchor {
   /**
@@ -277,7 +286,7 @@ export interface CrossAnchor {
   /**
    * When this cross-anchor was created (Unix seconds)
    */
-  timestamp: number;
+  timestamp: U64;
   /**
    * Signed attestation from the peer network over `batch.merkle_root`
    */
@@ -308,7 +317,7 @@ export interface ExternalAnchorProof {
   /**
    * When this anchor was created
    */
-  timestamp: number;
+  timestamp: U64;
 }
 /**
  * Configuration for external anchoring
@@ -317,7 +326,7 @@ export interface ExternalAnchorsConfig {
   /**
    * How often to anchor batches (seconds)
    */
-  anchor_period?: number;
+  anchor_period?: U64;
   /**
    * Whether external anchoring is enabled
    */
@@ -338,7 +347,7 @@ export interface FederationConfig {
   /**
    * How often to close batches (seconds)
    */
-  batch_period?: number;
+  batch_period?: U64;
   /**
    * Minimum number of peer networks that must cross-anchor
    */
@@ -366,6 +375,42 @@ export interface PeerNetworkInfo {
   id: string;
   /**
    * Minimum number of witnesses required from this peer
+   */
+  min_witnesses?: number;
+}
+/**
+ * Public federation discovery and policy fields used by verifiers.
+ *
+ * This is deliberately separate from [`FederationConfig`]: it contains no batch scheduling state or inbound authentication material.
+ */
+export interface FederationVerificationConfig {
+  /**
+   * Number of distinct configured peers required for a federated result.
+   */
+  cross_anchor_threshold?: number;
+  /**
+   * Whether cross-anchoring is enabled for this network.
+   */
+  enabled?: boolean;
+  /**
+   * Public gateway discovery information for configured peers.
+   */
+  peer_networks?: PeerNetworkVerificationInfo[];
+}
+/**
+ * Public discovery and verification policy for one federation peer.
+ */
+export interface PeerNetworkVerificationInfo {
+  /**
+   * Public gateway URL used to discover the peer's verification config.
+   */
+  gateway: string;
+  /**
+   * Peer network ID.
+   */
+  id: string;
+  /**
+   * Minimum number of signatures required from this peer network.
    */
   min_witnesses?: number;
 }
@@ -402,26 +447,26 @@ export interface TreeHead {
   /**
    * When this STH was issued (Unix seconds).
    */
-  timestamp: number;
+  timestamp: U64;
   /**
    * Number of leaves in the log.
    */
-  tree_size: number;
+  tree_size: U64;
 }
 /**
  * RFC 9162 §4.11 inclusion proof response (`GET /v1/log/proof`).
  */
 export interface LogInclusionProofResponse {
   audit_path: string[];
-  leaf_index: number;
+  leaf_index: U64;
   sth: SignedTreeHead;
-  tree_size: number;
+  tree_size: U64;
 }
 /**
  * Response for a Merkle inclusion proof (`GET /v1/proof/:hash`).
  */
 export interface MerkleProofResponse {
-  batch_id: number;
+  batch_id: U64;
   hash: string;
   index: number;
   merkle_root: string;
@@ -473,7 +518,7 @@ export interface WitnessInfo {
    */
   id: string;
   /**
-   * Ed25519 public key (hex encoded)
+   * Public key (Ed25519 32 bytes or BLS 96 bytes / 192 lowercase hex characters, hex encoded).
    */
   pubkey: string;
 }
@@ -485,6 +530,46 @@ export interface NetworkConfigPublic {
   signature_scheme: SignatureScheme;
   threshold: number;
   witness_count: number;
+}
+/**
+ * Secret-free trust anchor for verifying attestations, STHs, and proof bundles.  Operator `network.json` files are intentionally accepted as a superset when deserializing this type: unknown operational fields are ignored by serde, allowing offline tools to load existing files without exposing those fields in the verification model.
+ */
+export interface NetworkVerificationConfig {
+  /**
+   * Public federation discovery and policy.
+   */
+  federation?: FederationVerificationConfig;
+  /**
+   * Network identifier pinned into signed attestations.
+   */
+  id: string;
+  /**
+   * Signature scheme used by this network.
+   */
+  signature_scheme?: SignatureScheme & string;
+  /**
+   * Minimum number of witness signatures required.
+   */
+  threshold: number;
+  /**
+   * Witness identities and public keys.
+   */
+  witnesses: VerificationWitnessInfo[];
+}
+/**
+ * Public witness identity used by a [`NetworkVerificationConfig`].
+ *
+ * Unlike [`WitnessInfo`], this DTO has no endpoint or authentication token.
+ */
+export interface VerificationWitnessInfo {
+  /**
+   * Unique witness identifier.
+   */
+  id: string;
+  /**
+   * Public key (Ed25519 32 bytes or BLS 96 bytes / 192 lowercase hex characters, hex encoded).
+   */
+  pubkey: string;
 }
 /**
  * Self-contained bundle proving the full chain of trust for a hash.
@@ -545,11 +630,11 @@ export interface ProofVerificationConfig {
   /**
    * The home network's configuration (used to verify the threshold signature)
    */
-  network: NetworkConfig;
+  network: NetworkVerificationConfig;
   /**
    * Peer network configurations (used to verify cross-anchors). Cross-anchors from networks not present here are reported as unverified.
    */
-  peers: NetworkConfig[];
+  peers: NetworkVerificationConfig[];
 }
 /**
  * Request to timestamp a hash

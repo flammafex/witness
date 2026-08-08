@@ -13,7 +13,7 @@ echo "=========================================="
 echo
 echo "This demo shows how BLS signatures aggregate:"
 echo "  • Ed25519: 3 signatures = 192 bytes (3×64)"
-echo "  • BLS:     1 signature =  96 bytes (50% savings!)"
+echo "  • BLS:     1 signature =  48 bytes (75% signature-byte savings!)"
 echo
 read -p "Press Enter to continue..."
 echo
@@ -34,7 +34,7 @@ echo
 
 OUTPUT=$("$PROJECT_ROOT/target/release/witness" \
     --gateway "$GATEWAY" \
-    timestamp \
+    attest \
     --file "$BLS_DIR/test-file.txt" \
     --save "$BLS_DIR/test-file.txt.attestation" \
     --output text)
@@ -51,7 +51,7 @@ echo
 # Get the attestation and show details
 ATTESTATION=$("$PROJECT_ROOT/target/release/witness" \
     --gateway "$GATEWAY" \
-    get "$HASH" \
+    status "$HASH" \
     --output json)
 
 echo "Attestation JSON:"
@@ -59,19 +59,24 @@ echo "$ATTESTATION" | jq '.'
 echo
 
 # Parse signature info
-IS_AGGREGATED=$(echo "$ATTESTATION" | jq -r '.signatures | has("Aggregated")')
+IS_AGGREGATED=$(echo "$ATTESTATION" | jq -r '.signed_attestation.signatures | has("signers")')
 
 if [ "$IS_AGGREGATED" = "true" ]; then
-    SIGNATURE=$(echo "$ATTESTATION" | jq -r '.signatures.Aggregated.signature')
-    SIGNERS=$(echo "$ATTESTATION" | jq -r '.signatures.Aggregated.signers | join(", ")')
+    SIGNATURE=$(echo "$ATTESTATION" | jq -r '.signed_attestation.signatures.signature')
+    SIGNERS=$(echo "$ATTESTATION" | jq -r '.signed_attestation.signatures.signers | join(", ")')
     SIG_BYTES=$((${#SIGNATURE} / 2))
+
+    if [ "$SIG_BYTES" -ne 48 ]; then
+        echo "Error: blst::min_sig must emit a 48-byte G1 signature; got $SIG_BYTES bytes"
+        exit 1
+    fi
 
     echo "=========================================="
     echo "✓ BLS Aggregation Successful!"
     echo "=========================================="
     echo
     echo "Signature Details:"
-    echo "  Type:     BLS Aggregated"
+    echo "  Type:     BLS Aggregated (blst::min_sig)"
     echo "  Signers:  $SIGNERS"
     echo "  Size:     $SIG_BYTES bytes (single aggregated signature)"
     echo
@@ -90,9 +95,11 @@ echo "Step 4: Verifying the aggregated signature..."
 echo
 
 # Verify
+SIGNED_ATTESTATION="$BLS_DIR/test-file.txt.attestation.signed.json"
+echo "$ATTESTATION" | jq -e '.signed_attestation' > "$SIGNED_ATTESTATION"
 VERIFY_OUTPUT=$("$PROJECT_ROOT/target/release/witness" \
     --gateway "$GATEWAY" \
-    verify "$BLS_DIR/test-file.txt.attestation")
+    verify "$SIGNED_ATTESTATION")
 
 echo "$VERIFY_OUTPUT"
 echo
@@ -103,7 +110,7 @@ echo "=========================================="
 echo
 echo "Key Takeaways:"
 echo "  • BLS aggregates N signatures into 1"
-echo "  • 50% bandwidth savings vs Ed25519"
+echo "  • 75% signature-byte savings vs Ed25519"
 echo "  • Single pairing verification (faster)"
 echo "  • Same security guarantees"
 echo

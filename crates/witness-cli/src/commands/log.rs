@@ -1,8 +1,8 @@
 //! `witness log` subcommands: fetch STHs and verify RFC 9162 consistency
-//! proofs against a network's published [`NetworkConfig`].
+//! proofs against a network's published [`NetworkVerificationConfig`].
 
 use anyhow::{Context, Result};
-use witness_core::{verify_log_consistency, verify_signed_tree_head, NetworkConfig};
+use witness_core::{verify_log_consistency, verify_signed_tree_head, NetworkVerificationConfig};
 
 use witness_client::WitnessClient;
 
@@ -13,7 +13,7 @@ pub async fn sth(gateway: &str, output: &str, verify: bool) -> Result<()> {
     let sth = client.sth().await?;
 
     if verify {
-        let config: NetworkConfig = client.network().await?;
+        let config: NetworkVerificationConfig = client.network().await?;
         let count =
             verify_signed_tree_head(&sth, &config).context("STH signature verification failed")?;
         eprintln!(
@@ -48,7 +48,7 @@ pub async fn consistency(
     let proof = client.consistency(first, second).await?;
 
     if verify {
-        let config = client.network().await?;
+        let config: NetworkVerificationConfig = client.network().await?;
         verify_log_consistency(&proof, &config).context("Consistency proof verification failed")?;
         eprintln!(
             "Consistency proof verified: tree[{}] is a prefix of tree[{}]",

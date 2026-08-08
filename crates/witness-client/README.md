@@ -20,23 +20,25 @@ the default, trust-minimizing path. Talking to `POST /v1/verify` is available
 only under the explicitly-labelled `WitnessClient::verify_remote` ("the
 gateway's opinion"), which is **non-authoritative**.
 
-Verification functions take a caller-supplied `NetworkConfig` as a parameter —
+Verification functions take a caller-supplied `NetworkVerificationConfig` as a parameter —
 they never silently fetch one. Fetching a config from a gateway is a
 trust-on-first-use (TOFU) convenience, so the recommended pattern is to fetch a
-`NetworkConfig` **once**, pin it, and verify against that pinned config:
+`NetworkVerificationConfig` **once**, pin it, and verify against that pinned config.
+Existing operator `network.json` files are accepted as a superset when loaded
+for offline verification:
 
 ```rust,no_run
 use witness_client::{WitnessClient, verify, verify_proof_bundle};
-use witness_core::{NetworkConfig, ProofVerificationConfig};
+use witness_core::{NetworkVerificationConfig, ProofVerificationConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), witness_client::Error> {
     let client = WitnessClient::new("https://gateway.example.com")?;
 
-    // 1. Fetch the full network config ONCE (witness pubkeys, threshold,
-    //    scheme, federation peers). Auth tokens are stripped server-side.
-    //    Prefer pinning a `network.json`-derived config checked into your repo.
-    let network: NetworkConfig = client.network().await?;
+    // 1. Fetch the secret-free verification config ONCE (witness pubkeys,
+    //    threshold, scheme, federation peers). Operational fields are never
+    //    returned. Prefer pinning a network.json-derived config checked in.
+    let network: NetworkVerificationConfig = client.network().await?;
 
     // 2. Submit a hash and wait for confirmation.
     let hash = [0u8; 32]; // your SHA-256 content hash
@@ -107,7 +109,7 @@ never re-implements any cryptography.
 | `verify_log_inclusion(&proof, leaf)` | RFC 9162 inclusion proof against the STH in the response | `()` |
 
 `verify_proof_bundle` reaches `VerificationLevel::Federated` only when the
-`ProofVerificationConfig` carries peer `NetworkConfig`s — fetch them with
+`ProofVerificationConfig` carries peer `NetworkVerificationConfig`s — fetch them with
 `network_from(url)` for each cross-anchor peer.
 
 ## Error handling

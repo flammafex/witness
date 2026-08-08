@@ -12,8 +12,8 @@ import type {
   LogConsistencyProof,
   LogInclusionProofResponse,
   MerkleProofResponse,
-  NetworkConfig,
   NetworkConfigPublic,
+  NetworkVerificationConfig,
   ProofBundle,
   SignedAttestation,
   SignedTreeHead,
@@ -21,13 +21,18 @@ import type {
 } from './types.generated.js';
 import {
   ConfirmationTimeoutError,
+  AbortError,
   DecodeError,
   HttpStatusError,
   JobFailedError,
   NotFoundError,
+  TimeoutError,
   TransportError,
+  WitnessError,
 } from './errors.js';
+import { formatU64, parseWitnessJson, stringifyWitnessJson, toBigIntU64 } from './json.js';
 import { subscribeEvents, type EventsSubscription, type SubscribeOptions } from './ws.js';
+import type { U64 } from './types.generated.js';
 
 /** Freebird token input: a bare string is sugar for `{ tokenB64 }`. */
 export type FreebirdTokenInput = string | { tokenB64: string };
@@ -56,6 +61,54 @@ function normalizeFreebirdToken(input?: FreebirdTokenInput): FreebirdToken | und
   if (input === undefined) return undefined;
   if (typeof input === 'string') return { token_b64: input };
   return { token_b64: input.tokenB64 };
+}
+
+type RequestOptions = { signal?: AbortSignal; deadlineAt?: number };
+
+function mergeAbortSignals(signals: (AbortSignal | undefined)[]): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  const onAbort = (event: Event) => {
+    const source = event.target as AbortSignal;
+    controller.abort(source.reason);
+  };
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      for (const signal of active) signal.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+function awaitWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason ?? new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**
@@ -92,41 +145,76 @@ export class WitnessClient {
    * non-2xx → `HttpStatusError`. Transport failures → `TransportError`.
    * Undecodable bodies → `DecodeError`.
    */
-  private async request<T>(url: string, init: RequestInit, read: boolean): Promise<T> {
+  private async request<T>(
+    url: string,
+    init: RequestInit,
+    read: boolean,
+    options: RequestOptions = {},
+  ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const remaining = options.deadlineAt === undefined ? Infinity : options.deadlineAt - Date.now();
+    const requestTimeout = Math.min(this.timeoutMs, remaining);
+    if (requestTimeout <= 0) throw new TimeoutError();
+    let timedOut = false;
+    const timer = Number.isFinite(requestTimeout)
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort(new TimeoutError());
+        }, requestTimeout)
+      : undefined;
+    const merged = mergeAbortSignals([controller.signal, options.signal, init.signal ?? undefined]);
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      merged.cleanup();
+    };
 
     let response: Response;
     try {
-      response = await this.fetchImpl(url, { ...init, signal: controller.signal });
+      response = await awaitWithAbort(this.fetchImpl(url, { ...init, signal: merged.signal }), merged.signal);
     } catch (err) {
-      throw new TransportError(err instanceof Error ? err.message : String(err));
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      if (read && response.status === 404) throw new NotFoundError(body);
-      throw new HttpStatusError(response.status, body);
+      cleanup();
+      if (timedOut) throw new TimeoutError();
+      if (options.signal?.aborted || init.signal?.aborted) {
+        throw new AbortError('request aborted', { cause: options.signal?.reason ?? init.signal?.reason });
+      }
+      throw new TransportError(err instanceof Error ? err.message : String(err), {
+        cause: err,
+      });
     }
 
     try {
-      return (await response.json()) as T;
+      const body = await awaitWithAbort(response.text(), merged.signal);
+      if (timedOut) throw new TimeoutError();
+      if (options.signal?.aborted || init.signal?.aborted) {
+        throw new AbortError('response body read aborted', { cause: options.signal?.reason ?? init.signal?.reason });
+      }
+      if (!response.ok) {
+        if (read && response.status === 404) throw new NotFoundError(body);
+        throw new HttpStatusError(response.status, body);
+      }
+      return parseWitnessJson<T>(body);
     } catch (err) {
+      if (timedOut) throw new TimeoutError();
+      if (options.signal?.aborted || init.signal?.aborted) {
+        throw new AbortError('response body read aborted', { cause: options.signal?.reason ?? init.signal?.reason });
+      }
+      if (err instanceof WitnessError) throw err;
       throw new DecodeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      cleanup();
     }
   }
 
   private sleep(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
-        reject(signal.reason ?? new DOMException('aborted', 'AbortError'));
+        reject(new AbortError('sleep aborted', { cause: signal.reason }));
         return;
       }
       const onAbort = () => {
         clearTimeout(timer);
-        reject(signal?.reason ?? new DOMException('aborted', 'AbortError'));
+        signal?.removeEventListener('abort', onAbort);
+        reject(new AbortError('sleep aborted', { cause: signal?.reason }));
       };
       const timer = setTimeout(() => {
         signal?.removeEventListener('abort', onAbort);
@@ -158,7 +246,7 @@ export class WitnessClient {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+        body: stringifyWitnessJson(body),
       },
       false,
     );
@@ -169,12 +257,13 @@ export class WitnessClient {
   // ========================================================================
 
   /** Fetch the canonical attestation job for a hash. */
-  async getAttestation(hash: Uint8Array): Promise<AttestationJobResponse> {
+  async getAttestation(hash: Uint8Array, options?: { signal?: AbortSignal; deadlineAt?: number }): Promise<AttestationJobResponse> {
     WitnessClient.assertHash(hash);
     return this.request<AttestationJobResponse>(
       this.url(`/v1/attestations/${toHex(hash)}`),
       { method: 'GET' },
       true,
+      options,
     );
   }
 
@@ -197,41 +286,85 @@ export class WitnessClient {
     const timeoutMs = poll?.timeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
     const signal = poll?.signal;
     const start = Date.now();
+    const deadlineAt = start + timeoutMs;
+    const deadlineController = new AbortController();
+    const deadlineTimer = setTimeout(
+      () => deadlineController.abort(new TimeoutError('confirmation deadline exceeded')),
+      Math.max(0, timeoutMs),
+    );
+    const merged = mergeAbortSignals([signal, deadlineController.signal]);
     let lastStatus: AttestationJobStatus = 'pending';
 
-    for (;;) {
-      if (signal?.aborted) {
-        throw signal.reason ?? new DOMException('aborted', 'AbortError');
-      }
-      const elapsed = Date.now() - start;
-      if (elapsed >= timeoutMs) {
-        throw new ConfirmationTimeoutError(lastStatus);
-      }
-
-      const job = await this.getAttestation(hash);
-      lastStatus = job.status;
-
-      if (job.status === 'confirmed') {
-        if (!job.signed_attestation) {
-          throw new DecodeError(
-            `job for hash ${toHex(hash)} reported confirmed without a signed_attestation`,
-          );
+    try {
+      for (;;) {
+        if (deadlineController.signal.aborted || Date.now() >= deadlineAt) {
+          throw new ConfirmationTimeoutError(lastStatus);
         }
-        return job.signed_attestation;
-      }
-      if (job.status === 'failed') {
-        throw new JobFailedError(job.attempts, job.last_error ?? undefined);
-      }
+        if (signal?.aborted || merged.signal.aborted) {
+          throw new AbortError('confirmation polling aborted', { cause: signal?.reason });
+        }
 
-      // pending / retryable
-      const remaining = timeoutMs - elapsed;
-      let sleepMs = intervalMs;
-      if (job.next_attempt_at != null) {
-        const hint = job.next_attempt_at * 1000 - Date.now();
-        if (hint > sleepMs) sleepMs = hint;
+        let job: AttestationJobResponse;
+        try {
+          job = await this.getAttestation(hash, {
+            signal: merged.signal,
+            deadlineAt,
+          });
+        } catch (error) {
+          if (deadlineController.signal.aborted || Date.now() >= deadlineAt) {
+            throw new ConfirmationTimeoutError(lastStatus);
+          }
+          throw error;
+        }
+        lastStatus = job.status;
+
+        if (job.status === 'confirmed') {
+          if (!job.signed_attestation) {
+            throw new DecodeError(
+              `job for hash ${toHex(hash)} reported confirmed without a signed_attestation`,
+            );
+          }
+          return job.signed_attestation;
+        }
+        if (job.status === 'failed') {
+          throw new JobFailedError(job.attempts, job.last_error ?? undefined);
+        }
+
+        // pending / retryable. The server hint is an exact u64 timestamp.
+        const remaining = deadlineAt - Date.now();
+        if (remaining <= 0) throw new ConfirmationTimeoutError(lastStatus);
+        let sleepMs = intervalMs;
+        if (job.next_attempt_at != null) {
+          let nextAttempt: bigint;
+          try {
+            nextAttempt = toBigIntU64(job.next_attempt_at, 'next_attempt_at');
+          } catch (error) {
+            throw new DecodeError(error instanceof Error ? error.message : String(error));
+          }
+          const now = Date.now();
+          const nowSeconds = BigInt(Math.floor(now / 1000));
+          if (nextAttempt > nowSeconds) {
+            const delta = nextAttempt - nowSeconds;
+            const hint =
+              delta > BigInt(Number.MAX_SAFE_INTEGER)
+                ? Number.MAX_SAFE_INTEGER
+                : Number(delta) * 1000 - (now % 1000);
+            if (hint > sleepMs) sleepMs = hint;
+          }
+        }
+        sleepMs = Math.min(Math.max(0, sleepMs), remaining);
+        try {
+          await this.sleep(sleepMs, merged.signal);
+        } catch (error) {
+          if (deadlineController.signal.aborted || Date.now() >= deadlineAt) {
+            throw new ConfirmationTimeoutError(lastStatus);
+          }
+          throw error;
+        }
       }
-      sleepMs = Math.min(sleepMs, remaining);
-      await this.sleep(sleepMs, signal);
+    } finally {
+      clearTimeout(deadlineTimer);
+      merged.cleanup();
     }
   }
 
@@ -290,18 +423,18 @@ export class WitnessClient {
     return this.request<NetworkConfigPublic>(this.url('/v1/config'), { method: 'GET' }, true);
   }
 
-  /** Fetch the full `NetworkConfig` (`GET /v1/network`): the trust-anchor fetch. */
-  async network(): Promise<NetworkConfig> {
+  /** Fetch the secret-free `NetworkVerificationConfig` (`GET /v1/network`). */
+  async network(): Promise<NetworkVerificationConfig> {
     return this.networkFrom(this.gatewayUrl);
   }
 
   /**
-   * Fetch a `NetworkConfig` from an arbitrary gateway URL — used to fetch peer
+   * Fetch a `NetworkVerificationConfig` from an arbitrary gateway URL — used to fetch peer
    * network configs for cross-anchor (Federated) verification.
    */
-  async networkFrom(gatewayUrl: string): Promise<NetworkConfig> {
+  async networkFrom(gatewayUrl: string): Promise<NetworkVerificationConfig> {
     const base = gatewayUrl.replace(/\/+$/, '');
-    return this.request<NetworkConfig>(`${base}/v1/network`, { method: 'GET' }, true);
+    return this.request<NetworkVerificationConfig>(`${base}/v1/network`, { method: 'GET' }, true);
   }
 
   // ========================================================================
@@ -314,28 +447,30 @@ export class WitnessClient {
   }
 
   /** Look up a historical STH at a specific tree size. */
-  async sthAtSize(treeSize: number): Promise<SignedTreeHead> {
+  async sthAtSize(treeSize: U64): Promise<SignedTreeHead> {
     return this.request<SignedTreeHead>(
-      this.url(`/v1/log/sth/${treeSize}`),
+      this.url(`/v1/log/sth/${formatU64(treeSize, 'treeSize')}`),
       { method: 'GET' },
       true,
     );
   }
 
   /** Consistency proof linking two prior STHs (`first ≥ 1`, `first ≤ second`). */
-  async consistency(first: number, second: number): Promise<LogConsistencyProof> {
+  async consistency(first: U64, second: U64): Promise<LogConsistencyProof> {
     return this.request<LogConsistencyProof>(
-      this.url(`/v1/log/consistency?first=${first}&second=${second}`),
+      this.url(
+        `/v1/log/consistency?first=${formatU64(first, 'first')}&second=${formatU64(second, 'second')}`,
+      ),
       { method: 'GET' },
       true,
     );
   }
 
   /** RFC 9162 inclusion proof for `hash` against the STH at `treeSize`. */
-  async logProof(hash: Uint8Array, treeSize: number): Promise<LogInclusionProofResponse> {
+  async logProof(hash: Uint8Array, treeSize: U64): Promise<LogInclusionProofResponse> {
     WitnessClient.assertHash(hash);
     return this.request<LogInclusionProofResponse>(
-      this.url(`/v1/log/proof?hash=${toHex(hash)}&tree_size=${treeSize}`),
+      this.url(`/v1/log/proof?hash=${toHex(hash)}&tree_size=${formatU64(treeSize, 'treeSize')}`),
       { method: 'GET' },
       true,
     );
@@ -366,7 +501,7 @@ export class WitnessClient {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ attestation: signed }),
+        body: stringifyWitnessJson({ attestation: signed }),
       },
       false,
     );

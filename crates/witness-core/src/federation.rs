@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::net::IpAddr;
+use url::Url;
 
 use crate::external_anchors::ExternalAnchorProof;
 use crate::merkle::MerkleProof;
-use crate::{NetworkConfig, Result, SignedAttestation, WitnessError};
+use crate::{NetworkVerificationConfig, Result, SignedAttestation, WitnessError};
 
 /// A batch of attestations with their merkle root
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -36,7 +39,7 @@ pub struct AttestationBatch {
 /// is the cross-anchored batch's merkle root and whose `network_id` is the
 /// peer's own network ID.  This makes the cross-anchor a self-contained,
 /// independently verifiable threshold signature — clients can verify it
-/// against the peer's published [`NetworkConfig`] without trusting the
+/// against the peer's published [`NetworkVerificationConfig`] without trusting the
 /// originating gateway.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -65,8 +68,9 @@ pub struct CrossAnchor {
 /// Returns the number of verified signatures on success.
 pub fn verify_cross_anchor(
     cross_anchor: &CrossAnchor,
-    peer_config: &NetworkConfig,
+    peer_config: &NetworkVerificationConfig,
 ) -> Result<usize> {
+    peer_config.validate()?;
     let attestation = &cross_anchor.witness_attestation.attestation;
 
     if attestation.hash != cross_anchor.batch.merkle_root {
@@ -74,13 +78,17 @@ pub fn verify_cross_anchor(
     }
 
     if attestation.network_id != cross_anchor.witnessing_network {
-        return Err(WitnessError::InvalidSignature);
+        return Err(WitnessError::NetworkIdMismatch {
+            expected: cross_anchor.witnessing_network.clone(),
+            actual: attestation.network_id.clone(),
+        });
     }
 
     if peer_config.id != cross_anchor.witnessing_network {
-        return Err(WitnessError::WitnessNotFound(
-            cross_anchor.witnessing_network.clone(),
-        ));
+        return Err(WitnessError::NetworkIdMismatch {
+            expected: cross_anchor.witnessing_network.clone(),
+            actual: peer_config.id.clone(),
+        });
     }
 
     crate::verify_signed_attestation(&cross_anchor.witness_attestation, peer_config)
@@ -143,6 +151,134 @@ pub struct PeerNetworkInfo {
 
 fn default_min_witnesses() -> usize {
     2
+}
+
+/// Public federation discovery and policy fields used by verifiers.
+///
+/// This is deliberately separate from [`FederationConfig`]: it contains no
+/// batch scheduling state or inbound authentication material.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct FederationVerificationConfig {
+    /// Whether cross-anchoring is enabled for this network.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Public gateway discovery information for configured peers.
+    #[serde(default)]
+    pub peer_networks: Vec<PeerNetworkVerificationInfo>,
+
+    /// Number of distinct configured peers required for a federated result.
+    #[serde(default)]
+    pub cross_anchor_threshold: usize,
+}
+
+/// Public discovery and verification policy for one federation peer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct PeerNetworkVerificationInfo {
+    /// Peer network ID.
+    pub id: String,
+
+    /// Public gateway URL used to discover the peer's verification config.
+    pub gateway: String,
+
+    /// Minimum number of signatures required from this peer network.
+    #[serde(default = "default_min_witnesses")]
+    pub min_witnesses: usize,
+}
+
+/// Compatibility alias for callers that prefer the `Verification*` naming
+/// convention for public federation DTOs.
+pub type VerificationFederationConfig = FederationVerificationConfig;
+
+/// Compatibility alias for callers that prefer the `Verification*` naming
+/// convention for public peer DTOs.
+pub type VerificationPeerNetworkInfo = PeerNetworkVerificationInfo;
+
+impl FederationVerificationConfig {
+    pub(crate) fn validate(&self, home_id: &str) -> Result<()> {
+        let mut ids = HashSet::new();
+        for peer in &self.peer_networks {
+            if peer.id.trim().is_empty() {
+                return Err(WitnessError::InvalidVerificationConfig(
+                    "peer network id must be nonempty".to_string(),
+                ));
+            }
+            if peer.id == home_id {
+                return Err(WitnessError::InvalidVerificationConfig(format!(
+                    "peer network '{}' must be distinct from home network",
+                    peer.id
+                )));
+            }
+            if !ids.insert(peer.id.clone()) {
+                return Err(WitnessError::InvalidVerificationConfig(format!(
+                    "duplicate peer network id '{}'",
+                    peer.id
+                )));
+            }
+            if peer.min_witnesses == 0 {
+                return Err(WitnessError::InvalidVerificationConfig(format!(
+                    "peer '{}' min_witnesses must be at least 1",
+                    peer.id
+                )));
+            }
+            validate_peer_gateway_url(&peer.gateway)?;
+        }
+
+        if self.cross_anchor_threshold > self.peer_networks.len() {
+            return Err(WitnessError::InvalidVerificationConfig(format!(
+                "cross_anchor_threshold {} exceeds {} configured peers",
+                self.cross_anchor_threshold,
+                self.peer_networks.len()
+            )));
+        }
+        if self.enabled && self.cross_anchor_threshold == 0 {
+            return Err(WitnessError::InvalidVerificationConfig(
+                "enabled federation requires a nonzero cross_anchor_threshold".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Validate a public peer-discovery URL without performing network access.
+/// HTTPS is required except for explicit loopback HTTP development URLs.
+pub(crate) fn validate_peer_gateway_url(value: &str) -> Result<()> {
+    let url = Url::parse(value).map_err(|error| {
+        WitnessError::InvalidVerificationConfig(format!("invalid peer gateway URL: {error}"))
+    })?;
+
+    if url.username() != "" || url.password().is_some() {
+        return Err(WitnessError::InvalidVerificationConfig(
+            "peer gateway URL must not contain credentials".to_string(),
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(WitnessError::InvalidVerificationConfig(
+            "peer gateway URL must not contain a query or fragment".to_string(),
+        ));
+    }
+
+    match url.scheme() {
+        "https" => {}
+        "http" if url.host_str().is_some_and(is_loopback_host) => {}
+        _ => {
+            return Err(WitnessError::InvalidVerificationConfig(
+                "peer gateway URL must use HTTPS or explicit loopback HTTP for development"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let normalized = host.trim_start_matches('[').trim_end_matches(']');
+    normalized.eq_ignore_ascii_case("localhost")
+        || normalized
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 /// Request to cross-anchor a batch (sent to peer network)
@@ -254,10 +390,10 @@ pub struct ProofBundle {
 #[derive(Debug, Clone, schemars::JsonSchema)]
 pub struct ProofVerificationConfig {
     /// The home network's configuration (used to verify the threshold signature)
-    pub network: NetworkConfig,
+    pub network: NetworkVerificationConfig,
     /// Peer network configurations (used to verify cross-anchors).
     /// Cross-anchors from networks not present here are reported as unverified.
-    pub peers: Vec<NetworkConfig>,
+    pub peers: Vec<NetworkVerificationConfig>,
 }
 
 /// Result of verifying a [`ProofBundle`].
@@ -279,20 +415,35 @@ pub struct ProofBundleVerification {
 
 /// Verify a [`ProofBundle`] offline against the supplied network configurations.
 ///
-/// Returns an error only if the home network's threshold signature is invalid.
-/// Other layers (batch inclusion, cross-anchors) are reported per-layer in the
-/// result; callers decide what level they require.
+/// Returns an error for an invalid home or supplied peer trust configuration,
+/// or if the home threshold signature is invalid. Optional proof layers are
+/// reported per-layer and downgrade the result when invalid.
 pub fn verify_proof_bundle(
     bundle: &ProofBundle,
     config: &ProofVerificationConfig,
 ) -> Result<ProofBundleVerification> {
+    config.network.validate()?;
+    let mut peer_ids = HashSet::new();
+    for peer in &config.peers {
+        peer.validate()?;
+        if peer.id == config.network.id || !peer_ids.insert(peer.id.clone()) {
+            return Err(WitnessError::InvalidVerificationConfig(format!(
+                "peer trust configurations must have unique IDs distinct from home network: {}",
+                peer.id
+            )));
+        }
+    }
+
     let verified_signatures =
         crate::verify_signed_attestation(&bundle.signed_attestation, &config.network)?;
 
     let batch_inclusion_verified = bundle.batch_inclusion.as_ref().map(|inclusion| {
         let leaf = bundle.signed_attestation.attestation.hash;
         let proof = &inclusion.merkle_proof;
-        proof.leaf == leaf
+        inclusion.batch.network_id == config.network.id
+            && proof.leaf_index < inclusion.batch.attestation_count
+            && proof.tree_size == inclusion.batch.attestation_count
+            && proof.leaf == leaf
             && proof.root == inclusion.batch.merkle_root
             && crate::merkle::verify_inclusion(
                 &leaf,
@@ -303,22 +454,53 @@ pub fn verify_proof_bundle(
             )
     });
 
+    let home_batch = config.network.id.as_str();
+    let mut verified_peer_ids = HashSet::new();
     let cross_anchors_verified: Vec<(String, bool)> = bundle
         .cross_anchors
         .iter()
         .map(|ca| {
-            let ok = config
-                .peers
-                .iter()
-                .find(|p| p.id == ca.witnessing_network)
-                .is_some_and(|peer| verify_cross_anchor(ca, peer).is_ok());
+            let already_verified = verified_peer_ids.contains(&ca.witnessing_network);
+            let batch_linked = batch_inclusion_verified == Some(true)
+                && ca.batch.network_id == home_batch
+                && bundle.batch_inclusion.as_ref().is_some_and(|inclusion| {
+                    ca.batch.merkle_root == inclusion.batch.merkle_root
+                        && ca.batch.network_id == inclusion.batch.network_id
+                        && ca.batch.id == inclusion.batch.id
+                });
+            let ok = !already_verified
+                && batch_linked
+                && config
+                    .network
+                    .federation
+                    .peer_networks
+                    .iter()
+                    .find(|policy| policy.id == ca.witnessing_network)
+                    .and_then(|policy| {
+                        config
+                            .peers
+                            .iter()
+                            .find(|peer| peer.id == policy.id)
+                            .map(|peer| {
+                                policy.min_witnesses <= peer.witnesses.len()
+                                    && verify_cross_anchor(ca, peer)
+                                        .is_ok_and(|count| count >= policy.min_witnesses)
+                            })
+                    })
+                    .unwrap_or(false);
+            if ok {
+                verified_peer_ids.insert(ca.witnessing_network.clone());
+            }
             (ca.witnessing_network.clone(), ok)
         })
         .collect();
 
-    let verified_peer_count = cross_anchors_verified.iter().filter(|(_, ok)| *ok).count();
+    let verified_peer_count = verified_peer_ids.len();
+    let federation_threshold_met = config.network.federation.enabled
+        && batch_inclusion_verified == Some(true)
+        && verified_peer_count >= config.network.federation.cross_anchor_threshold;
 
-    let level = if verified_peer_count > 0 {
+    let level = if federation_threshold_met {
         VerificationLevel::Federated {
             peer_count: verified_peer_count,
         }
@@ -342,8 +524,8 @@ pub fn verify_proof_bundle(
 mod tests {
     use super::*;
     use crate::{
-        signature_scheme::AttestationSignatures, Attestation, MerkleTree, SignatureScheme,
-        WitnessInfo, WitnessSignature,
+        signature_scheme::AttestationSignatures, Attestation, MerkleTree, NetworkConfig,
+        PeerNetworkInfo, SignatureScheme, WitnessInfo, WitnessSignature,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
@@ -407,7 +589,10 @@ mod tests {
             timestamp: 1,
         };
 
-        assert_eq!(verify_cross_anchor(&cross_anchor, &peer_cfg).unwrap(), 1);
+        assert_eq!(
+            verify_cross_anchor(&cross_anchor, &peer_cfg.verification_config().unwrap()).unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -432,7 +617,9 @@ mod tests {
             timestamp: 1,
         };
 
-        assert!(verify_cross_anchor(&cross_anchor, &peer_cfg).is_err());
+        assert!(
+            verify_cross_anchor(&cross_anchor, &peer_cfg.verification_config().unwrap()).is_err()
+        );
     }
 
     #[test]
@@ -459,13 +646,27 @@ mod tests {
         };
 
         // Verifying against a different peer's config must fail
-        assert!(verify_cross_anchor(&cross_anchor, &other_cfg).is_err());
+        assert!(
+            verify_cross_anchor(&cross_anchor, &other_cfg.verification_config().unwrap()).is_err()
+        );
     }
 
     #[test]
     fn proof_bundle_verifies_full_chain() {
-        let (home_cfg, home_key) = ed25519_network("home-net");
+        let (mut home_cfg, home_key) = ed25519_network("home-net");
         let (peer_cfg, peer_key) = ed25519_network("peer-net");
+
+        home_cfg.federation = FederationConfig {
+            enabled: true,
+            peer_networks: vec![PeerNetworkInfo {
+                id: peer_cfg.id.clone(),
+                gateway: "https://peer.example".to_string(),
+                min_witnesses: 1,
+                auth_token: None,
+            }],
+            cross_anchor_threshold: 1,
+            ..Default::default()
+        };
 
         // Home network signs the original hash
         let leaf_hash = [42u8; 32];
@@ -508,8 +709,8 @@ mod tests {
         };
 
         let cfg = ProofVerificationConfig {
-            network: home_cfg,
-            peers: vec![peer_cfg],
+            network: home_cfg.verification_config().unwrap(),
+            peers: vec![peer_cfg.verification_config().unwrap()],
         };
         let result = verify_proof_bundle(&bundle, &cfg).unwrap();
 
@@ -521,5 +722,89 @@ mod tests {
             result.level,
             VerificationLevel::Federated { peer_count: 1 }
         ));
+
+        let valid_anchor = bundle.cross_anchors[0].clone();
+        let mut invalid_anchor = valid_anchor.clone();
+        invalid_anchor.batch.merkle_root = [0xFF; 32];
+
+        let mut invalid_first = bundle.clone();
+        invalid_first.cross_anchors = vec![invalid_anchor.clone(), valid_anchor.clone()];
+        let invalid_first_result = verify_proof_bundle(&invalid_first, &cfg).unwrap();
+
+        let mut valid_first = bundle.clone();
+        valid_first.cross_anchors = vec![valid_anchor, invalid_anchor];
+        let valid_first_result = verify_proof_bundle(&valid_first, &cfg).unwrap();
+
+        assert_eq!(invalid_first_result.level, valid_first_result.level);
+        let peer_count = |level: &VerificationLevel| match level {
+            VerificationLevel::Federated { peer_count } => *peer_count,
+            _ => 0,
+        };
+        assert_eq!(
+            peer_count(&invalid_first_result.level),
+            peer_count(&valid_first_result.level)
+        );
+        assert_eq!(peer_count(&invalid_first_result.level), 1);
+        assert!(matches!(
+            invalid_first_result.level,
+            VerificationLevel::Federated { peer_count: 1 }
+        ));
+        assert_eq!(
+            invalid_first_result.cross_anchors_verified,
+            vec![
+                ("peer-net".to_string(), false),
+                ("peer-net".to_string(), true)
+            ]
+        );
+        assert_eq!(
+            valid_first_result.cross_anchors_verified,
+            vec![
+                ("peer-net".to_string(), true),
+                ("peer-net".to_string(), false)
+            ]
+        );
+
+        // Optional federation evidence must never manufacture a federated
+        // result when its home batch/root/source linkage is absent or wrong.
+        let mut missing_batch = bundle.clone();
+        missing_batch.batch_inclusion = None;
+        let missing = verify_proof_bundle(&missing_batch, &cfg).unwrap();
+        assert_eq!(missing.level, VerificationLevel::Basic);
+        assert!(!missing.cross_anchors_verified[0].1);
+
+        let mut wrong_root = bundle.clone();
+        wrong_root.cross_anchors[0].batch.merkle_root = [0xFF; 32];
+        let wrong_root_result = verify_proof_bundle(&wrong_root, &cfg).unwrap();
+        assert_eq!(wrong_root_result.level, VerificationLevel::Batched);
+        assert!(!wrong_root_result.cross_anchors_verified[0].1);
+
+        let mut wrong_network = bundle.clone();
+        wrong_network.cross_anchors[0].batch.network_id = "unrelated".to_string();
+        let wrong_network_result = verify_proof_bundle(&wrong_network, &cfg).unwrap();
+        assert_eq!(wrong_network_result.level, VerificationLevel::Batched);
+        assert!(!wrong_network_result.cross_anchors_verified[0].1);
+
+        let mut duplicate = bundle.clone();
+        duplicate
+            .cross_anchors
+            .push(duplicate.cross_anchors[0].clone());
+        let duplicate_result = verify_proof_bundle(&duplicate, &cfg).unwrap();
+        assert_eq!(
+            duplicate_result.cross_anchors_verified,
+            vec![
+                ("peer-net".to_string(), true),
+                ("peer-net".to_string(), false)
+            ]
+        );
+        assert!(matches!(
+            duplicate_result.level,
+            VerificationLevel::Federated { peer_count: 1 }
+        ));
+
+        let mut below_threshold = cfg.clone();
+        below_threshold.network.federation.peer_networks[0].min_witnesses = 2;
+        let below_result = verify_proof_bundle(&bundle, &below_threshold).unwrap();
+        assert_eq!(below_result.level, VerificationLevel::Batched);
+        assert!(!below_result.cross_anchors_verified[0].1);
     }
 }

@@ -7,9 +7,12 @@
 // Works in Node 18+ (via `node:fs`) and browsers (via `fetch`). The `.wasm`
 // binary is checked in next to this file and copied to `dist/wasm/` on build.
 
+import { canonicalizeWitnessJson, parseWitnessJson, toBigIntU64 } from '../json.js';
+import type { U64 } from '../types.generated.js';
+
 export type WasmResult<T> = { ok: T } | { err: { reason: string; message: string } };
 
-interface WasmExports {
+export interface WasmExports {
   memory: WebAssembly.Memory;
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
@@ -73,17 +76,23 @@ interface WasmExports {
   decode_attestation_signatures(a: number, al: number): number;
 }
 
-type Arg = { kind: 'bytes'; data: Uint8Array } | { kind: 'u64'; value: number };
+export type WasmArg = { kind: 'bytes'; data: Uint8Array } | { kind: 'u64'; value: U64 };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function bytes(s: string): Arg {
+function bytes(s: string): WasmArg {
   return { kind: 'bytes', data: encoder.encode(s) };
 }
 
-function u64(value: number): Arg {
+function u64(value: U64): WasmArg {
   return { kind: 'u64', value };
+}
+
+function jsonInput(text: string): WasmArg {
+  // Raw JSON entry points are still safe: canonicalize through lossless-json
+  // before allocating and passing bytes to Rust.
+  return bytes(canonicalizeWitnessJson(text));
 }
 
 let cachedInstance: WebAssembly.Instance | null = null;
@@ -113,18 +122,19 @@ async function getInstance(): Promise<WebAssembly.Instance> {
   return instance;
 }
 
-function invoke(exports: WasmExports, fnName: string, args: Arg[]): WasmResult<unknown> {
+/** Invoke one export; kept public for low-level loader tests and adapters. */
+export function invokeWasm(exports: WasmExports, fnName: string, args: WasmArg[]): WasmResult<unknown> {
   const { memory, alloc, dealloc, result_ptr, result_len } = exports;
-  const ptrs: number[] = [];
+  const allocations: Array<{ ptr: number; length: number }> = [];
   try {
     const callArgs: (number | bigint)[] = [];
     for (const arg of args) {
       if (arg.kind === 'u64') {
-        callArgs.push(BigInt(arg.value));
+        callArgs.push(toBigIntU64(arg.value));
       } else {
         const ptr = alloc(arg.data.length);
         new Uint8Array(memory.buffer, ptr, arg.data.length).set(arg.data);
-        ptrs.push(ptr);
+        allocations.push({ ptr, length: arg.data.length });
         callArgs.push(ptr, arg.data.length);
       }
     }
@@ -133,15 +143,22 @@ function invoke(exports: WasmExports, fnName: string, args: Arg[]): WasmResult<u
     const len = result_len();
     const ptr = result_ptr();
     const text = decoder.decode(new Uint8Array(memory.buffer, ptr, len));
-    return JSON.parse(text) as WasmResult<unknown>;
+    return parseWitnessJson<WasmResult<unknown>>(text);
   } finally {
-    for (const ptr of ptrs) {
-      dealloc(ptr, 0);
+    for (const allocation of allocations) {
+      dealloc(allocation.ptr, allocation.length);
     }
   }
 }
 
-/** The typed WASM verification surface. */
+/**
+ * The typed WASM verification surface.
+ *
+ * JSON parameters are raw JSON text on purpose. Every parameter is first
+ * canonicalized by `canonicalizeWitnessJson`; callers must pass the original
+ * response text or use the exported `parseWitnessJson`/`stringifyWitnessJson`
+ * pair rather than native `JSON.parse`.
+ */
 export interface WitnessCoreModule {
   verifySignedAttestation(signedJson: string, configJson: string): WasmResult<number>;
   verifySignedTreeHead(sthJson: string, configJson: string): WasmResult<number>;
@@ -159,14 +176,14 @@ export interface WitnessCoreModule {
   ): WasmResult<true>;
   verifyInclusion(
     leafHex: string,
-    leafIndex: number,
-    treeSize: number,
+    leafIndex: U64,
+    treeSize: U64,
     siblingsJson: string,
     rootHex: string,
   ): WasmResult<boolean>;
   verifyConsistency(
-    first: number,
-    second: number,
+    first: U64,
+    second: U64,
     firstHashHex: string,
     secondHashHex: string,
     proofJson: string,
@@ -190,80 +207,80 @@ export async function loadWitnessCore(): Promise<WitnessCoreModule> {
 
   const module: WitnessCoreModule = {
     verifySignedAttestation(signedJson, configJson) {
-      return invoke(exports, 'verify_signed_attestation', [
-        bytes(signedJson),
-        bytes(configJson),
+      return invokeWasm(exports, 'verify_signed_attestation', [
+        jsonInput(signedJson),
+        jsonInput(configJson),
       ]) as WasmResult<number>;
     },
     verifySignedTreeHead(sthJson, configJson) {
-      return invoke(exports, 'verify_signed_tree_head', [
-        bytes(sthJson),
-        bytes(configJson),
+      return invokeWasm(exports, 'verify_signed_tree_head', [
+        jsonInput(sthJson),
+        jsonInput(configJson),
       ]) as WasmResult<number>;
     },
     verifyLogConsistency(proofJson, configJson) {
-      return invoke(exports, 'verify_log_consistency', [
-        bytes(proofJson),
-        bytes(configJson),
+      return invokeWasm(exports, 'verify_log_consistency', [
+        jsonInput(proofJson),
+        jsonInput(configJson),
       ]) as WasmResult<true>;
     },
     verifyProofBundle(bundleJson, networkJson, peersJson) {
-      return invoke(exports, 'verify_proof_bundle', [
-        bytes(bundleJson),
-        bytes(networkJson),
-        bytes(peersJson),
+      return invokeWasm(exports, 'verify_proof_bundle', [
+        jsonInput(bundleJson),
+        jsonInput(networkJson),
+        jsonInput(peersJson),
       ]) as WasmResult<unknown>;
     },
     verifySignatureBls(attestationJson, sigHex, pkHex) {
-      return invoke(exports, 'verify_signature_bls', [
-        bytes(attestationJson),
+      return invokeWasm(exports, 'verify_signature_bls', [
+        jsonInput(attestationJson),
         bytes(sigHex),
         bytes(pkHex),
       ]) as WasmResult<true>;
     },
     verifyAggregatedSignatureBls(attestationJson, aggSigHex, pksJson) {
-      return invoke(exports, 'verify_aggregated_signature_bls', [
-        bytes(attestationJson),
+      return invokeWasm(exports, 'verify_aggregated_signature_bls', [
+        jsonInput(attestationJson),
         bytes(aggSigHex),
-        bytes(pksJson),
+        jsonInput(pksJson),
       ]) as WasmResult<true>;
     },
     verifyInclusion(leafHex, leafIndex, treeSize, siblingsJson, rootHex) {
-      return invoke(exports, 'verify_inclusion', [
+      return invokeWasm(exports, 'verify_inclusion', [
         bytes(leafHex),
         u64(leafIndex),
         u64(treeSize),
-        bytes(siblingsJson),
+        jsonInput(siblingsJson),
         bytes(rootHex),
       ]) as WasmResult<boolean>;
     },
     verifyConsistency(first, second, firstHashHex, secondHashHex, proofJson) {
-      return invoke(exports, 'verify_consistency', [
+      return invokeWasm(exports, 'verify_consistency', [
         u64(first),
         u64(second),
         bytes(firstHashHex),
         bytes(secondHashHex),
-        bytes(proofJson),
+        jsonInput(proofJson),
       ]) as WasmResult<boolean>;
     },
     attestationToBytes(attestationJson) {
-      return invoke(exports, 'attestation_to_bytes', [
-        bytes(attestationJson),
+      return invokeWasm(exports, 'attestation_to_bytes', [
+        jsonInput(attestationJson),
       ]) as WasmResult<string>;
     },
     merkleTreeHash(leavesJson) {
-      return invoke(exports, 'merkle_tree_hash', [
-        bytes(leavesJson),
+      return invokeWasm(exports, 'merkle_tree_hash', [
+        jsonInput(leavesJson),
       ]) as WasmResult<string>;
     },
     treeHeadDigest(treeHeadJson) {
-      return invoke(exports, 'tree_head_digest', [
-        bytes(treeHeadJson),
+      return invokeWasm(exports, 'tree_head_digest', [
+        jsonInput(treeHeadJson),
       ]) as WasmResult<string>;
     },
     decodeAttestationSignatures(json) {
-      return invoke(exports, 'decode_attestation_signatures', [
-        bytes(json),
+      return invokeWasm(exports, 'decode_attestation_signatures', [
+        jsonInput(json),
       ]) as WasmResult<unknown>;
     },
   };

@@ -19,7 +19,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 use tower_http::cors::CorsLayer;
-use witness_core::{Attestation, AttestationEvent, NetworkConfig, SignResponse, WitnessInfo};
+use witness_core::{
+    Attestation, AttestationEvent, NetworkConfig, NetworkVerificationConfig, SignResponse,
+    WitnessInfo,
+};
 
 use crate::admin::{admin_router, AdminState};
 use crate::epoch::epoch_secs;
@@ -79,6 +82,7 @@ struct MetricsState {
 #[derive(Clone)]
 struct CoreState {
     config: Arc<NetworkConfig>,
+    verification_config: Arc<NetworkVerificationConfig>,
     storage: Arc<Storage>,
     event_tx: broadcast::Sender<AttestationEvent>,
     ws_auth_token: Option<Arc<str>>,
@@ -136,8 +140,10 @@ impl GatewayServer {
         cancel: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
         let (event_tx, _) = broadcast::channel(256);
+        let verification_config = Arc::new(self.config.verification_config()?);
         let core_state = CoreState {
             config: self.config.clone(),
+            verification_config,
             storage: self.storage.clone(),
             event_tx: event_tx.clone(),
             ws_auth_token: self.ws_auth_token.clone(),

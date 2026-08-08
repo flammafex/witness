@@ -8,7 +8,7 @@ Witness lets a federation of independent operators co-sign that a hash existed a
 
 - **Durable & Free:** Submission returns immediately; leased workers retry quorum signing without gas fees
 - **Threshold Signatures:** Requires multiple independent witnesses to collude to forge
-- **Signature Schemes:** Ed25519 (fast) or BLS12-381 (50% smaller signatures)
+- **Signature Schemes:** Ed25519 (fast) or `blst::min_sig` BLS12-381 (48-byte G1 aggregate signature, 96-byte G2 public key, 75% signature-byte saving vs three 64-byte Ed25519 signatures)
 - **Federation:** Independent networks cross-anchor for additional security
 - **External Anchoring:** Batch merkle roots to Internet Archive, Trillian, DNS, or Ethereum
 - **Light Clients:** Merkle proofs for verification without full history
@@ -193,8 +193,8 @@ unlocked by migration or reclaimed after lease expiry and resumed by the worker.
 - Best for: low latency, few witnesses
 
 **BLS12-381**
-- Signature aggregation (N signatures → 96 bytes)
-- 50% bandwidth savings for 3+ witnesses
+- `blst::min_sig`: 48-byte compressed G1 aggregate signature and 96-byte compressed G2 public key
+- 75% signature-byte saving versus three 64-byte Ed25519 signatures
 - Best for: high throughput, many witnesses
 
 ```bash
@@ -359,7 +359,7 @@ Each datacenter hosts witnesses from all networks—no single failure takes down
 | Metric | Ed25519 | BLS |
 |--------|---------|-----|
 | Typical worker signing pass | 50-150ms | 60-180ms |
-| Signature size (3 witnesses) | 192 bytes | 96 bytes |
+| Signature size (3 witnesses) | 192 bytes | 48 bytes |
 | Throughput | 100-500 req/s | 80-400 req/s |
 
 API submission latency is separate from signing latency: `POST /v1/attestations`

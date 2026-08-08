@@ -8,6 +8,7 @@
 
 import type { AttestationEvent } from './types.generated.js';
 import { AuthRequiredError, DecodeError, TransportError, WitnessError } from './errors.js';
+import { parseWitnessJson, stringifyWitnessJson } from './json.js';
 
 /** Options for [`subscribeEvents`]. */
 export type SubscribeOptions = {
@@ -38,6 +39,15 @@ function decodeMessage(data: unknown): string {
   return String(data);
 }
 
+function isAuthRequired(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as { type?: unknown }).type === AUTH_REQUIRED
+  );
+}
+
 /**
  * Subscribe to attestation events over WebSocket.
  *
@@ -54,6 +64,7 @@ export function subscribeEvents(gatewayUrl: string, opts: SubscribeOptions): Eve
   let closed = false;
   let retries = 0;
   let ws: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const onAbort = () => close();
   opts.signal?.addEventListener('abort', onAbort, { once: true });
@@ -62,13 +73,17 @@ export function subscribeEvents(gatewayUrl: string, opts: SubscribeOptions): Eve
     if (closed) return;
     closed = true;
     opts.signal?.removeEventListener('abort', onAbort);
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     ws?.close();
   }
 
   function connect(): void {
     if (closed) return;
     ws = new WebSocket(url);
-    let authed = !opts.token; // without a token there is no handshake
+    let authReplied = false;
 
     ws.onopen = () => {
       // Nothing to do; events (or an auth_required probe) arrive via onmessage.
@@ -77,32 +92,33 @@ export function subscribeEvents(gatewayUrl: string, opts: SubscribeOptions): Eve
     ws.onmessage = (event) => {
       const data = decodeMessage(event.data);
 
-      if (!authed) {
-        // First message: perform the auth handshake.
-        let value: unknown;
-        try {
-          value = JSON.parse(data);
-        } catch {
-          value = undefined;
-        }
-        if (
-          value !== null &&
-          typeof value === 'object' &&
-          (value as { type?: unknown }).type === AUTH_REQUIRED
-        ) {
-          ws?.send(JSON.stringify({ token: opts.token ?? '' }));
-          authed = true;
+      try {
+        const value = parseWitnessJson<unknown>(data);
+        // Authentication is a protocol message, not an event. Recognize it
+        // regardless of whether it is the first message and regardless of
+        // whether the caller supplied a token.
+        if (isAuthRequired(value)) {
+          if (!opts.token) {
+            opts.onError?.(new AuthRequiredError());
+            close();
+            return;
+          }
+          if (!authReplied) {
+            ws?.send(stringifyWitnessJson({ token: opts.token }));
+            authReplied = true;
+          }
           return;
         }
-        // The server did not require auth; treat this as a normal event.
-        authed = true;
-      }
-
-      try {
-        const ev = JSON.parse(data) as AttestationEvent;
+        // A server that does not require authentication may send an event as
+        // the first message even when a token was supplied.
+        const ev = value as AttestationEvent;
         opts.onEvent(ev);
       } catch (err) {
-        opts.onError?.(new DecodeError(err instanceof Error ? err.message : String(err)));
+        opts.onError?.(
+          err instanceof WitnessError
+            ? err
+            : new DecodeError(err instanceof Error ? err.message : String(err)),
+        );
       }
     };
 
@@ -120,7 +136,10 @@ export function subscribeEvents(gatewayUrl: string, opts: SubscribeOptions): Eve
       }
       retries += 1;
       const delay = baseDelayMs * 2 ** (retries - 1) + Math.random() * baseDelayMs;
-      setTimeout(connect, delay);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
     };
 
     ws.onerror = () => {
@@ -128,6 +147,7 @@ export function subscribeEvents(gatewayUrl: string, opts: SubscribeOptions): Eve
     };
   }
 
-  connect();
+  if (opts.signal?.aborted) close();
+  else connect();
   return { close };
 }

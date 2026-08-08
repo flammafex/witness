@@ -85,7 +85,9 @@ through batching and federated anchoring to durable lease-based jobs.
   `completed_at`.
 - **Data migration**: rewrites existing rows — a legacy `confirmed` row stays
   confirmed only if it carries a real Ed25519 signature row (64 bytes, or the
-  legacy 96-byte BLS encoding) or a complete BLS aggregate representation;
+  historical pre-`blst::min_sig` 96-byte BLS encoding) or a complete BLS
+  aggregate representation; current `blst::min_sig` signatures are 48-byte G1
+  values with 96-byte G2 public keys;
   `pending` stays pending (made immediately due with `next_attempt_at = 0`);
   everything else becomes terminal `failed` with a descriptive `last_error`.
 - **Guards**: `CREATE UNIQUE INDEX (network_id, sequence)` refuses the migration

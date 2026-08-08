@@ -28,7 +28,7 @@ Five modules implementing the auditor: the CLI entry point (`main.rs`), module r
 
 - **Responsibility**: minimal `reqwest` HTTP client for the gateway's log endpoints (30 s timeout).
 - **Key types**: `GatewayClient { client, gateway_url }` (normalizes trailing `/`).
-- **Key functions / routes**: `get_network_config()` → `GET /v1/network`; `get_latest_sth()` → `GET /v1/log/sth`; `get_consistency_proof(first, second)` → `GET /v1/log/consistency?first=&second=`. Non-2xx → contextualized `anyhow` error.
+- **Key functions / routes**: `get_network_config()` → `GET /v1/network` (`NetworkVerificationConfig`); `get_latest_sth()` → `GET /v1/log/sth`; `get_consistency_proof(first, second)` → `GET /v1/log/consistency?first=&second=`. Non-2xx → contextualized `anyhow` error.
 - **Consumers**: `audit.rs`.
 
 ### `storage.rs`

@@ -67,6 +67,23 @@ binaries from the Forgejo releases page.
   output is byte-identical; only pathological inbound payloads are affected.
   Golden vectors regenerated (`wire.json` version 2). **Security-sensitive.**
 
+- **Secret-free verification config:** `GET /v1/network` documents and returns
+  the public `NetworkVerificationConfig` trust-anchor shape. Witness endpoints,
+  witness bearer tokens, and federation authentication tokens are not part of
+  the response. `GET /v1/config` remains informational only.
+- **Federation guarantees:** a `Federated` proof requires valid cross-anchor
+  signatures from configured peer networks and pinned peer verification
+  configs. The configured peer threshold is an independent durability layer,
+  not Byzantine consensus or protection from colluding operators.
+- **TypeScript numeric/wire contract:** generated Rust `u64` fields are
+  `U64 = number | bigint`; the central `lossless-json` codec preserves exact
+  values through `u64::MAX`, emits unquoted bigint numbers and lowercase hash
+  hex, and rejects unsafe numeric inputs. Query methods accept exact U64 values.
+- **WebSocket contract:** `auth_required` is always recognized. A tokenless
+  challenge raises `AuthRequiredError` without reconnecting; a supplied token
+  is replied with and the stream continues. Explicit close/abort cancels
+  reconnect timers.
+
 ## SDK Version Compatibility
 
 The Witness SDKs (`witness-client` on crates.io, `@witness/sdk` on npm) are
@@ -75,7 +92,7 @@ versioned collectively (spec §3.9).
 
 | SDK | Gateway `/v1` wire | Notes |
 |---|---|---|
-| 0.8.x | as of workspace 0.8.0 | current release of both SDKs |
+| 0.8.x | as of workspace 0.8.0 | current pre-1.0 release; TS package is publishable |
 | bump rule | additive routes: none needed; any §3 change: SDK minor bump + new vectors | §3.9 |
 
 **Bump rule (spec §3.9):** any change to the pinned wire/crypto parameters in
@@ -100,7 +117,9 @@ publishable artifacts alongside the existing binaries:
 - **`@witness/sdk`** (`sdk/ts/`) — the TypeScript SDK. ESM-first package with a
   `./verify` subpath, a WASM-compiled local verifier, WebSocket support, and a
   typed error hierarchy. Types are generated from `witness-core` serde
-  definitions (zero-diff CI gate).
+  definitions (zero-diff CI gate). It uses the central lossless JSON codec for
+  protocol responses, events, and WASM inputs; its strict signature-union
+  decoder rejects ambiguous shapes.
 - **`witness-core-wasm`** (`crates/witness-core-wasm`) — the WASM build of
   `witness-core`'s verification functions that backs `@witness/sdk`'s local
   verifier (single trust root, spec §4.3 Path A). Not published to crates.io;
@@ -113,6 +132,26 @@ policy: breaking changes bump the minor; `/v1/*` routes are versioned
 collectively (§3.9). **Publishing does not imply a security audit** — both
 package READMEs say so.
 
+### TypeScript npm publication
+
+From `sdk/ts/`, the npm release gate is intentionally repeatable and inspectable:
+
+```sh
+npm install
+(cd ../.. && ./scripts/check-generated-drift.sh)
+npm run build
+npm test
+npm run typecheck
+npm pack --dry-run
+npm publish --access public
+```
+
+`prepublishOnly` runs the build, tests, typecheck, and `npm pack --dry-run`.
+The package is scoped-public, targets Node 22+, includes `dist/`, `README.md`,
+and the repository's Apache-2.0 `LICENSE`, and remains subject to the pre-1.0
+minor-bump policy. Review the dry-run file list for accidental secrets, source
+artifacts, and missing WASM before publishing.
+
 ## Pre-Tag Checklist
 
 - Update workspace crate versions in `Cargo.toml`.
@@ -122,6 +161,8 @@ package READMEs say so.
 - Run `cargo clippy --workspace --all-targets -- -D warnings`.
 - Run `cargo test --workspace`.
 - Run `cargo build --release --workspace`.
+- From `sdk/ts/`, run `npm install`, `npm run build`, `npm test`,
+  `npm run typecheck`, and `npm pack --dry-run` before `npm publish --access public`.
 - Smoke-test Docker images if deployment assets changed.
 - Exercise the example network with `./examples/setup.sh`,
   `./examples/start.sh`, `./examples/demo.sh`, and `./examples/stop.sh`.
@@ -183,7 +224,7 @@ A throwaway prototype crate (outside the repo, under a temp dir) compiled
   includes the **full** `witness-core` (all modules, including keygen,
   federation, and external anchors). A pruned verification-only subset would be
   smaller. Well under the 350 KB compressed criterion.
-- **Runtime:** the module instantiates in Node 18+ with **no imports** (no JS
+- **Runtime:** the module instantiates in Node 22+ with **no imports** (no JS
   shim required for the verification path). Browser + Node compatible.
 
 ## Path B feasibility assessment (`@noble/curves`)
@@ -207,8 +248,8 @@ A throwaway prototype crate (outside the repo, under a temp dir) compiled
 - Untagged-union discrimination (§3.5): presence of a `signatures` array ⇒
   multi-sig; presence of both `signature` and `signers` ⇒ aggregated; anything
   else (including payloads with both shapes' keys) ⇒ `DecodeError`.
-- Hex encoding (§3.4): lowercase, no `0x` prefix; reject uppercase and
-  odd-length hex.
+- Hex encoding (§3.4): lowercase, no `0x` prefix; decoders accept mixed-case
+  input and reject odd-length/non-hex strings; emitters canonicalize lowercase.
 - RFC 9162 Merkle domain separators (§3.6): leaves `SHA-256(0x00 ‖ leaf)`,
   internal nodes `SHA-256(0x01 ‖ left ‖ right)`, positional (no sorting).
 - STH domain separation (§3.7): `STH_DOMAIN = b"witness-sth-v1\x00"` +

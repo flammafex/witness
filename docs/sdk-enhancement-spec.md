@@ -4,9 +4,10 @@
 (Scarcity, Clout, Rendezvous, Prestige, and future clients) never compose bespoke gateway
 clients or reimplement Witness cryptography.
 
-**Status:** Supersedes "Spec 2 — Witness" in `../sdk-enhancement-specs.md`. That draft
-omitted the endpoints its own headline features depend on and underspecified the
-TypeScript crypto port. This revision is implementable as-is.
+**Status:** Current implementation specification for the Witness SDKs. It supersedes
+the earlier "Spec 2 — Witness" draft, which omitted endpoints its headline features
+depend on and underspecified the TypeScript crypto port. This revision is implementable
+as-is.
 
 **Explicitly out of scope:**
 
@@ -59,7 +60,7 @@ Two concrete deletion targets define success:
    available only under the explicitly-labelled name `verifyRemote` / `verify_remote`
    ("the gateway's opinion"), documented as non-authoritative.
 2. **Trust anchors are caller-controlled.** Verification APIs accept a caller-supplied
-   `NetworkConfig` (and peer configs). Fetching configs from gateways is a TOFU
+   secret-free `NetworkVerificationConfig` (and peer configs). Fetching configs from gateways is a TOFU
    convenience (`WitnessVerifier.fetch(client)`), never a silent default inside a
    `verify` call.
 3. **One trust root.** All crypto semantics live in `witness-core`. The Rust SDK
@@ -108,8 +109,8 @@ unknown witness, wrong key, and sub-threshold sets.
 
 Source of truth: `crates/witness-core/src/bls.rs`.
 
-- Library/orientation: `blst::min_sig` — **signatures in G2's counterpart: 48-byte G1
-  signatures, 96-byte G2 public keys.**
+- Library/orientation: `blst::min_sig` — **48-byte compressed G1 signatures and
+  96-byte compressed G2 public keys.**
 - **DST (verbatim, byte-exact):** `WITNESS_BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_`
 - Hash-to-curve suite implied by the DST: SHA-256 XMD, SSWU, random oracle.
 - Verification enables subgroup checks on the signature and public key
@@ -117,10 +118,10 @@ Source of truth: `crates/witness-core/src/bls.rs`.
 - Aggregation is blst `AggregateSignature` aggregation of individual min_sig signatures;
   the aggregate is verified once against the aggregate of the signers' public keys, and
   the signer list is carried in `AttestationSignatures::Aggregated.signers`.
-- ⚠ **Repo-comment hazard:** `witness-core/codemap.md` claims "G2 signatures, 96-byte
-  keys/sigs" and `types.rs` comments that BLS signatures are "96 bytes". Per the code
-  (`blst::min_sig`), signatures are **48 bytes** and public keys 96 bytes. The TS port
-  must follow the code. (Fix the two stale comments in the same PR.)
+- **Documentation rule:** all public documentation and codemaps must match the
+  implementation: `blst::min_sig` uses 48-byte G1 signatures and 96-byte G2
+  public keys. The TS port and examples must not describe the opposite
+  orientation.
 
 ### 3.4 Hashing and hex wire encoding
 
@@ -177,6 +178,21 @@ Source of truth: `crates/witness-core/src/log.rs`.
 | `AttestationEvent` | `{ "type": string, "hash": hex, "timestamp": u64 }` | `server/mod.rs` (moved to core per §5.1) |
 | WS auth envelope | server may first send `{ "type": "auth_required" }`; client replies `{ "token": string }` within 5 s; failure closes with code 4001 | `server/ws.rs` |
 | `VerifyResponse` | `{ valid, verified_signatures, required_signatures, message }` | `types.rs` |
+
+All request-path hashes and echoed hash fields are canonical lowercase hex. The
+SDKs may accept a caller's byte representation or mixed-case inbound hex, but
+emitters and normalized response values use lowercase.
+
+### 3.8.1 Exact integer handling in the TypeScript SDK
+
+Every Rust `u64` wire field is generated as `U64 = number | bigint`; ordinary
+bounded integer fields remain ordinary safe-number types. The TypeScript SDK's
+central `lossless-json` codec parses safe integer tokens as `number` and exact
+values above `Number.MAX_SAFE_INTEGER` through `u64::MAX` as `bigint`. It never
+uses a native `JSON.parse` reviver for u64 preservation. Bigints serialize as
+unquoted decimal JSON tokens; unsafe JavaScript numbers, fractional/negative
+u64 values, and overflow are rejected. Query APIs carrying u64 accept and
+format either exact representation.
 
 ### 3.9 Stability policy
 
@@ -330,8 +346,8 @@ impl WitnessClient {
 
     // Config surfaces (see §5.7 for trust semantics)
     pub async fn public_config(&self) -> Result<NetworkConfigPublic>;   // info only
-    pub async fn network(&self) -> Result<NetworkConfig>;               // /v1/network
-    pub async fn network_from(&self, gateway_url: &str) -> Result<NetworkConfig>;
+    pub async fn network(&self) -> Result<NetworkVerificationConfig>;  // secret-free /v1/network
+    pub async fn network_from(&self, gateway_url: &str) -> Result<NetworkVerificationConfig>;
 
     // Transparency log
     pub async fn sth(&self) -> Result<SignedTreeHead>;
@@ -350,11 +366,11 @@ impl WitnessClient {
 
 // Local verification — the default, trust-minimizing path. Thin re-exports/wrappers
 // over witness-core; witness-client never re-implements them.
-pub fn verify(signed: &SignedAttestation, config: &NetworkConfig) -> Result<usize>;
+pub fn verify(signed: &SignedAttestation, config: &NetworkVerificationConfig) -> Result<usize>;
 pub fn verify_proof_bundle(bundle: &ProofBundle, config: &ProofVerificationConfig)
     -> Result<ProofBundleVerification>;
-pub fn verify_sth(sth: &SignedTreeHead, config: &NetworkConfig) -> Result<usize>;
-pub fn verify_consistency(proof: &LogConsistencyProof, config: &NetworkConfig) -> Result<()>;
+pub fn verify_sth(sth: &SignedTreeHead, config: &NetworkVerificationConfig) -> Result<usize>;
+pub fn verify_consistency(proof: &LogConsistencyProof, config: &NetworkVerificationConfig) -> Result<()>;
 pub fn verify_log_inclusion(proof: &LogInclusionProofResponse, leaf: [u8; 32]) -> Result<()>;
 ```
 
@@ -376,10 +392,17 @@ pub fn verify_log_inclusion(proof: &LogInclusionProofResponse, leaf: [u8; 32]) -
 
 - `public_config()` → `/v1/config`; informational (witness count, scheme, threshold).
   **It is not a trust anchor and must be documented as insufficient for verification.**
-- `network()` → `/v1/network` (full witness pubkey set, tokens stripped server-side).
+- `network()` → `/v1/network` (`NetworkVerificationConfig`: full witness public-key
+  set plus public federation discovery, with witness endpoints and all bearer
+  tokens stripped server-side).
 - `network_from(url)` → same route on an arbitrary gateway; required for cross-anchor
   verification, since `verify_proof_bundle` needs a `ProofVerificationConfig { network,
   peers }` to ever reach `VerificationLevel::Federated`.
+- Federation guarantees are scoped: the `cross_anchor_threshold` distinct peer
+  networks must provide valid cross-anchor signatures, and each peer config must
+  be pinned by the caller. Missing/unreachable peers are reported as unverified;
+  federation adds independent durability but is not Byzantine consensus or a
+  guarantee against colluding operators.
 - Verification functions **only** take configs as parameters. Fetch-and-use is the
   caller's explicit choice (TOFU); SDK docs must show the pinned-config pattern first.
 
@@ -415,14 +438,19 @@ suite. CLI UX and local-verification behavior are unchanged (the CLI keeps catch
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./verify": { "types": "./dist/verify/index.d.ts", "import": "./dist/verify/index.js" }
   },
-  "files": ["dist"],
-  "sideEffects": false
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public" }
 }
 ```
 
-ESM-first, `fetch` injectable (Node 18+ and browsers), no Node-only APIs in the core
-path, `prepublishOnly: "npm run build && npm run test"` (tests include the §4.2 vector
-gate). The `verify` subpath keeps crypto code out of bundles that only talk HTTP.
+ESM-first, `fetch` injectable (Node 22+ and browsers), no Node-only APIs in the core
+path, direct use of the platform WebSocket API, and `prepublishOnly` must run build, tests, typecheck, the authoritative generation-drift script, and `npm pack --dry-run`
+(tests include the §4.2 vector gate). The `verify` subpath keeps crypto code out of
+bundles that only talk HTTP. The package is public but pre-1.0: publishing does not
+constitute an audit or imply Byzantine-fault tolerance.
 
 ### 6.2 Client surface (mirrors §5.5)
 
@@ -440,13 +468,13 @@ export class WitnessClient {
   health(): Promise<void>
 
   publicConfig(): Promise<NetworkConfigPublic>  // informational; NOT a trust anchor
-  network(): Promise<NetworkConfig>
-  networkFrom(gatewayUrl: string): Promise<NetworkConfig>
+  network(): Promise<NetworkVerificationConfig> // secret-free trust anchor shape
+  networkFrom(gatewayUrl: string): Promise<NetworkVerificationConfig>
 
   sth(): Promise<SignedTreeHead>
-  sthAtSize(treeSize: number): Promise<SignedTreeHead>
-  consistency(first: number, second: number): Promise<LogConsistencyProof>
-  logProof(hash: Uint8Array, treeSize: number): Promise<LogInclusionProofResponse>
+  sthAtSize(treeSize: U64): Promise<SignedTreeHead>
+  consistency(first: U64, second: U64): Promise<LogConsistencyProof>
+  logProof(hash: Uint8Array, treeSize: U64): Promise<LogInclusionProofResponse>
 
   verifyRemote(signed: SignedAttestation): Promise<VerifyResponse> // gateway's opinion
 
@@ -458,6 +486,9 @@ export type PollConfig = { intervalMs?: number; timeoutMs?: number; signal?: Abo
 // job 'failed' → JobFailedError; timeout → ConfirmationTimeoutError; signal aborts.
 ```
 
+`type U64 = number | bigint` is generated for Rust `u64` wire fields. The central
+`lossless-json` codec must be used for every protocol response/body, WebSocket
+event, and WASM JSON input; native `JSON.parse` must not be used to preserve u64.
 Wire types are generated (§6.6) and keep serde's snake_case field names; only
 SDK-constructed inputs use camelCase normalization. **Freebird token harmonization:**
 `FreebirdTokenInput = string | { tokenB64: string }` — a bare string is sugar for
@@ -469,8 +500,8 @@ SDK-constructed inputs use camelCase normalization. **Freebird token harmonizati
 ```ts
 export class WitnessVerifier {
   /** Pinned trust anchor. Peers required for cross-anchor (Federated) verification. */
-  constructor(network: NetworkConfig, peers?: NetworkConfig[])
-  /** Explicit TOFU convenience: verifier.network() (+ networkFrom for each cross-anchor peer). */
+  constructor(network: NetworkVerificationConfig, peers?: NetworkVerificationConfig[])
+  /** Explicit TOFU convenience: client.network() (+ networkFrom for each cross-anchor peer). */
   static async fetch(client: WitnessClient): Promise<WitnessVerifier>
 
   verifyAttestation(signed: SignedAttestation): number   // verified sig count
@@ -489,7 +520,8 @@ Failures throw `VerificationError` with a machine-readable `reason` (sub-thresho
 duplicate signer, unknown witness, bad signature, index/size mismatch, ambiguous
 signature encoding). Implementation per the §4.3 decision (WASM or noble + vector
 gate). Barrel also exports the explicit `decodeAttestationSignatures` discriminating
-decoder (§3.5).
+decoder (§3.5): `signatures` alone is multi-sig; `signature` plus `signers` is
+aggregated; partial or ambiguous union payloads are rejected as `DecodeError`.
 
 ### 6.4 WebSocket events
 
@@ -504,17 +536,22 @@ export type SubscribeOptions = {
 export interface EventsSubscription { close(): void }
 ```
 
-Implements the first-message auth handshake (§3.8): on `{"type":"auth_required"}`,
-reply `{"token": ...}` within the server's 5 s window; close code 4001 →
-`AuthRequiredError` (no auto-retry; the token is wrong or absent). Reconnects re-run
-the handshake. `EventSource`/polling fallback is intentionally **not** provided —
-`waitForConfirmation` covers that need.
+Implements the auth handshake (§3.8): whenever `{"type":"auth_required"}` is
+received, a supplied token is replied with `{"token": ...}` within the server's
+5 s window. Without a token, the client reports `AuthRequiredError` and never
+reconnects. A token-supplied connection may receive an event before a challenge;
+that event is delivered normally. Close code 4001 also reports
+`AuthRequiredError` with no auto-retry. Reconnects re-run the handshake, while
+explicit close and abort cancel pending reconnect timers. `EventSource`/polling
+fallback is intentionally **not** provided — `waitForConfirmation` covers that need.
 
 ### 6.5 Error hierarchy
 
 ```ts
 export class WitnessError extends Error { readonly code: WitnessErrorCode }
 export class TransportError extends WitnessError
+export class TimeoutError extends TransportError
+export class AbortError extends TransportError
 export class HttpStatusError extends WitnessError { status: number; body: string }
 export class NotFoundError extends WitnessError
 export class JobFailedError extends WitnessError { attempts: number; lastError?: string }
@@ -531,8 +568,13 @@ export type WitnessErrorCode = "transport" | "http" | "not_found" | "job_failed"
 - Add `schemars` derives to `witness-core` wire types (behind no feature; cheap).
 - A generator bin/xtask emits JSON Schema; `json-schema-to-typescript` (or
   equivalent) produces the TS interfaces; output is checked into `@witness/sdk`.
-- **CI drift gate:** regeneration must produce zero diff, else CI fails. This — not a
-  hand-written YAML file — is what keeps TS types synchronized with serde types.
+- **Authoritative drift gate:** from the workspace root,
+  `./scripts/check-generated-drift.sh` runs `gen_ts_types`, TS type generation,
+  `gen_vectors`, and `gen_openapi --features openapi`, then requires zero diff
+  for `sdk/ts/schema/schema.json`, `sdk/ts/src/types.generated.ts`, all checked-in
+  vectors, and `docs/openapi.yaml`. CI and the TS `prepublishOnly` gate invoke
+  this script; a dirty tree with intended generated changes must fail rather
+  than weaken the comparison.
 
 ### 6.7 Security notes
 
@@ -569,7 +611,7 @@ export type WitnessErrorCode = "transport" | "http" | "not_found" | "job_failed"
 |---|---|---|---|
 | `GET /health` | `health()` | `health()` | `{"status":"ok"}` |
 | `GET /v1/config` | `public_config()` | `publicConfig()` | informational only |
-| `GET /v1/network` | `network()` / `network_from()` | `network()` / `networkFrom()` | trust-anchor fetch |
+| `GET /v1/network` | `network()` / `network_from()` | `network()` / `networkFrom()` | secret-free `NetworkVerificationConfig`; explicit TOFU fetch |
 | `POST /v1/attestations` | `create_attestation()` | `createAttestation()` | idempotent on duplicate hash |
 | `GET /v1/attestations/:hash` | `get_attestation()` | `getAttestation()` | |
 | (poll loop) | `wait_for_confirmation()` | `waitForConfirmation()` | §5.6 semantics |
@@ -592,7 +634,7 @@ export type WitnessErrorCode = "transport" | "http" | "not_found" | "job_failed"
 
 | SDK | Gateway `/v1` wire | Notes |
 |---|---|---|
-| 0.7.x | as of workspace 0.7.0 | initial release of both SDKs |
+| 0.8.x | as of workspace 0.8.0 | Phase 1/2 SDKs; publishable TypeScript package |
 | bump rule | additive routes: none needed; any §3 change: SDK minor bump + new vectors | §3.9 |
 
 Both package READMEs carry the pre-1.0 / unaudited / not-Byzantine-fault-tolerant
@@ -613,7 +655,9 @@ disclaimer and state that SDK publication is not an audit.
   verifier per Phase-0 decision (§6.3), WS (§6.4), errors (§6.5), packaging (§6.1).
   *Gate: 100% vector parity; conformance suite green.*
 - **Phase 3 — docs & release.** OpenAPI/AsyncAPI + drift tests (§7), READMEs,
-  docs/release, CHANGELOG, compat matrix (§9) published.
+  docs/release, CHANGELOG, compat matrix (§9), npm packaging, and security/codemap
+  corrections published. *Gate: `npm pack --dry-run` contains only the intended
+  dist/readme/license artifacts and all package checks pass.*
 
 ---
 
@@ -621,9 +665,11 @@ disclaimer and state that SDK publication is not an audit.
 
 1. `cargo add witness-client` works; a consumer submits, polls (or subscribes), fetches
    a bundle, and verifies **locally** — including reaching `VerificationLevel::Federated`
-   via `network_from()` peer configs — with no raw HTTP and no `witness-core` internals.
+   via secret-free `network_from()` peer configs — with no raw HTTP and no
+   `witness-core` internals.
 2. `npm install @witness/sdk` works; the same lifecycle completes in TS, with local
-   verification byte-parity proven by the checked-in golden vectors in CI.
+   verification byte-parity proven by the checked-in golden vectors in CI. The
+   package dry-run contains `dist/`, `README.md`, and Apache-2.0 `LICENSE`.
 3. `waitForConfirmation` / `wait_for_confirmation` behave per §5.6, including typed
    `JobFailed` and timeout errors honoring `next_attempt_at`.
 4. WebSocket events are consumable through the SDKs, including the token-auth
@@ -635,7 +681,8 @@ disclaimer and state that SDK publication is not an audit.
 8. `witness-cli` builds on `witness-client`; its UX and local-verification verdicts
    are unchanged; the duplicate `WitnessClient` name no longer exists in the workspace.
 9. Token-stripping regression tests prove `/v1/config` and `/v1/network` never
-   serialize `auth_token` / federation tokens after the §5.1 type moves.
+   serialize `auth_token` / federation tokens after the §5.1 type moves;
+   `/v1/network` exposes `NetworkVerificationConfig` only.
 10. READMEs document the pinned-config verification pattern first and carry the
     pre-1.0/unaudited disclaimer.
 </content>

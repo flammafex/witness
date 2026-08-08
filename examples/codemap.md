@@ -12,7 +12,7 @@ All scripts assume they run from the workspace root (`PROJECT_ROOT="$(pwd)"`), u
 
 - **setup.sh**: builds `witness-node`, generates 3 keypairs + tokens, writes `examples/witness1.json`…`witness3.json` (id `witness-N`, port `3000+N`, host `127.0.0.1`, `network_id` `example-network`, `max_clock_skew` 300) and `examples/network.json` (threshold 2, endpoints `http://localhost:3001..3003`, empty `federation_peers`).
 - **start.sh**: requires `network.json`, builds the workspace, launches 3 witness nodes (ports **3001–3003**) and 1 gateway (port **8080**, sqlite db `examples/gateway.db`), each backgrounded with PID files; prints endpoints and a CLI hint.
-- **demo.sh**: requires the gateway on 8080; creates `/tmp/test-file.txt`, timestamps it via `witness-cli timestamp --file`, looks it up by hash, verifies the saved attestation, and prints the network config.
+- **demo.sh**: requires the gateway on 8080; creates `/tmp/test-file.txt`, submits it via `witness-cli attest --file`, polls with `status`, verifies the saved signed attestation, and prints the public config.
 - **stop.sh**: stops gateway + witnesses by PID (graceful kill, then `kill -9`), removes PID files, and `pkill -f` fallbacks.
 
 ### Dual-gateway mode — 2 independent networks (`setup-gateway.sh`, `start-gateway.sh`)
@@ -36,7 +36,7 @@ All scripts assume they run from the workspace root (`PROJECT_ROOT="$(pwd)"`), u
 
 - **setup.sh**: self-locating (`PROJECT_ROOT` from `BASH_SOURCE`); generates **BLS** keypairs via `witness-node --generate-key --bls`, writes witness configs with `"signature_scheme": "bls"` (ports **8001–8003**, `network_id` `bls-network`), `network.json` with `signature_scheme: bls` + threshold 2, and a `gateway.json`. Note it cleans old `witness-*`/`gateway*`/`network.json` artifacts first.
 - **start.sh**: starts the 3 witnesses and the gateway on port **9000** — the gateway is launched from env (`NETWORK_CONFIG=.../network.json`, `DATABASE_URL=sqlite:.../gateway.db`) rather than CLI args. Verifies each process is alive and reports failures.
-- **demo.sh**: explains the pitch (Ed25519: 3 sigs = 192 bytes; BLS: 1 aggregated sig = 96 bytes, ~50% savings); timestamps a test file via the `witness` CLI, `get`s the attestation JSON and asserts the signature is an `Aggregated` BLS sig with its signer list and byte size, then `verify`s the attestation.
+- **demo.sh**: explains the pitch (Ed25519: 3 sigs = 192 bytes; BLS `min_sig`: 1 aggregated G1 sig = 48 bytes, 75% signature-byte savings); attests a test file via the `witness` CLI, checks `status` JSON for the `{ signature, signers }` BLS aggregate, then verifies the extracted signed attestation.
 - **stop.sh**: PID-based stop + `pkill -f "witness-.*bls/..."` fallbacks.
 
 ## Flow

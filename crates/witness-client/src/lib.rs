@@ -15,11 +15,11 @@
 //!
 //! # Trust anchors are caller-controlled
 //!
-//! Verification functions accept a caller-supplied [`NetworkConfig`] (and peer
+//! Verification functions accept a caller-supplied [`NetworkVerificationConfig`] (and peer
 //! configs). Fetching configs from gateways is a trust-on-first-use (TOFU)
 //! convenience ([`WitnessClient::network`] / [`WitnessClient::network_from`]),
 //! never a silent default inside a `verify` call. Prefer pinning a
-//! `network.json`-derived config.
+//! `network.json`-derived verification config.
 //!
 //! # Pre-1.0 disclaimer
 //!
@@ -42,7 +42,7 @@ pub use verify::{
 pub use witness_core::types::{AttestationJobResponse, AttestationJobStatus};
 pub use witness_core::{
     Attestation, AttestationEvent, ExternalAnchorProof, FreebirdToken, LogConsistencyProof,
-    LogInclusionProofResponse, MerkleProofResponse, NetworkConfig, NetworkConfigPublic,
+    LogInclusionProofResponse, MerkleProofResponse, NetworkConfigPublic, NetworkVerificationConfig,
     ProofBundle, ProofBundleVerification, ProofVerificationConfig, SignedAttestation,
     SignedTreeHead, VerifyResponse,
 };

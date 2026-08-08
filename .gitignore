@@ -18,6 +18,11 @@ CLAUDE.md
 
 # Local test configs (contain private keys)
 *-single.json
+examples/network.json
+examples/witness*.json
+
+# Local deepwork state
+.slim/deepwork/
 
 # Node / TypeScript SDK
 node_modules/

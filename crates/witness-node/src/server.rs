@@ -452,7 +452,11 @@ mod tests {
 
         let mut signed = SignedAttestation::new(request.attestation);
         signed.add_signature(response.witness_id, response.signature);
-        let verified = witness_core::verify_signed_attestation(&signed, &network).unwrap();
+        let verified = witness_core::verify_signed_attestation(
+            &signed,
+            &network.verification_config().unwrap(),
+        )
+        .unwrap();
         assert_eq!(verified, 1);
     }
 

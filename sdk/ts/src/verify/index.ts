@@ -1,6 +1,6 @@
 // Local verification — the default, trust-minimizing path (§6.3).
 //
-// `WitnessVerifier` pins a caller-supplied `NetworkConfig` (and optional peer
+// `WitnessVerifier` pins a caller-supplied `NetworkVerificationConfig` (and optional peer
 // configs for cross-anchor / Federated verification) and delegates every
 // cryptographic check to the WASM-compiled `witness-core` module — the single
 // trust root (spec §4.3, Path A). No crypto is hand-ported to JS.
@@ -14,13 +14,14 @@ import type { VerificationFailureReason } from '../errors.js';
 import type {
   LogConsistencyProof,
   LogInclusionProofResponse,
-  NetworkConfig,
+  NetworkVerificationConfig,
   ProofBundle,
   ProofBundleVerification,
   SignedAttestation,
   SignedTreeHead,
 } from '../types.generated.js';
 import type { WitnessClient } from '../client.js';
+import { stringifyWitnessJson, toBigIntU64 } from '../json.js';
 import { getLoadedModule, loadWitnessCore, type WitnessCoreModule } from '../wasm/loader.js';
 
 export { decodeAttestationSignatures, decodeHex } from '../decode.js';
@@ -51,11 +52,11 @@ function throwErr(result: { err: { reason: string; message: string } }): never {
  * method runs client-side against `witness-core` semantics via WASM.
  */
 export class WitnessVerifier {
-  private readonly network: NetworkConfig;
-  private readonly peers: NetworkConfig[];
+  private readonly network: NetworkVerificationConfig;
+  private readonly peers: NetworkVerificationConfig[];
 
   /** Pinned trust anchor. Peers required for cross-anchor (Federated) verification. */
-  constructor(network: NetworkConfig, peers: NetworkConfig[] = []) {
+  constructor(network: NetworkVerificationConfig, peers: NetworkVerificationConfig[] = []) {
     this.network = network;
     this.peers = peers;
   }
@@ -63,7 +64,10 @@ export class WitnessVerifier {
   /**
    * Async constructor: loads the WASM module and returns a ready verifier.
    */
-  static async create(network: NetworkConfig, peers: NetworkConfig[] = []): Promise<WitnessVerifier> {
+  static async create(
+    network: NetworkVerificationConfig,
+    peers: NetworkVerificationConfig[] = [],
+  ): Promise<WitnessVerifier> {
     await loadWitnessCore();
     return new WitnessVerifier(network, peers);
   }
@@ -74,7 +78,7 @@ export class WitnessVerifier {
    */
   static async fetch(client: WitnessClient): Promise<WitnessVerifier> {
     const network = await client.network();
-    const peers: NetworkConfig[] = [];
+    const peers: NetworkVerificationConfig[] = [];
     for (const peer of network.federation?.peer_networks ?? []) {
       try {
         peers.push(await client.networkFrom(peer.gateway));
@@ -87,12 +91,12 @@ export class WitnessVerifier {
   }
 
   /** The pinned home-network config. */
-  networkConfig(): NetworkConfig {
+  networkConfig(): NetworkVerificationConfig {
     return this.network;
   }
 
   /** The pinned peer configs (for cross-anchor verification). */
-  peerConfigs(): NetworkConfig[] {
+  peerConfigs(): NetworkVerificationConfig[] {
     return this.peers;
   }
 
@@ -105,8 +109,8 @@ export class WitnessVerifier {
    */
   verifyAttestation(signed: SignedAttestation): number {
     const result = getCore().verifySignedAttestation(
-      JSON.stringify(signed),
-      JSON.stringify(this.network),
+      stringifyWitnessJson(signed),
+      stringifyWitnessJson(this.network),
     );
     if ('err' in result) throwErr(result);
     return result.ok;
@@ -121,9 +125,9 @@ export class WitnessVerifier {
    */
   verifyBundle(bundle: ProofBundle): ProofBundleVerification {
     const result = getCore().verifyProofBundle(
-      JSON.stringify(bundle),
-      JSON.stringify(this.network),
-      JSON.stringify(this.peers),
+      stringifyWitnessJson(bundle),
+      stringifyWitnessJson(this.network),
+      stringifyWitnessJson(this.peers),
     );
     if ('err' in result) throwErr(result);
     return result.ok as ProofBundleVerification;
@@ -137,8 +141,8 @@ export class WitnessVerifier {
    */
   verifySth(sth: SignedTreeHead): number {
     const result = getCore().verifySignedTreeHead(
-      JSON.stringify(sth),
-      JSON.stringify(this.network),
+      stringifyWitnessJson(sth),
+      stringifyWitnessJson(this.network),
     );
     if ('err' in result) throwErr(result);
     return result.ok;
@@ -152,8 +156,8 @@ export class WitnessVerifier {
    */
   verifyConsistency(proof: LogConsistencyProof): void {
     const result = getCore().verifyLogConsistency(
-      JSON.stringify(proof),
-      JSON.stringify(this.network),
+      stringifyWitnessJson(proof),
+      stringifyWitnessJson(this.network),
     );
     if ('err' in result) throwErr(result);
   }
@@ -169,18 +173,20 @@ export class WitnessVerifier {
    * Throws `VerificationError` on failure.
    */
   verifyLogInclusion(proof: LogInclusionProofResponse, leafHex: string): void {
+    const proofTreeSize = toBigIntU64(proof.tree_size, 'proof.tree_size');
+    const sthTreeSize = toBigIntU64(proof.sth.tree_head.tree_size, 'sth.tree_head.tree_size');
     this.verifySth(proof.sth);
-    if (proof.tree_size !== proof.sth.tree_head.tree_size) {
+    if (proofTreeSize !== sthTreeSize) {
       throw new VerificationError(
         'index-size-mismatch',
-        `proof tree_size ${proof.tree_size} does not match STH tree_size ${proof.sth.tree_head.tree_size}`,
+        `proof tree_size ${proofTreeSize} does not match STH tree_size ${sthTreeSize}`,
       );
     }
     const result = getCore().verifyInclusion(
       leafHex,
       proof.leaf_index,
       proof.tree_size,
-      JSON.stringify(proof.audit_path),
+      stringifyWitnessJson(proof.audit_path),
       proof.sth.tree_head.root_hash,
     );
     if ('err' in result) throwErr(result);

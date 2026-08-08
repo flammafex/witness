@@ -2,11 +2,15 @@
 
 ## Responsibility
 
-Ad-hoc operational scripts for the Witness workspace. Currently contains one artifact: `freebird-witness-smoke.sh`, an end-to-end smoke test that stands up a full **Freebird + Witness** stack — Freebird issuer + verifier, a 3-witness threshold-2 Witness network configured to *require* Freebird tokens, an actual token issuance, and a timestamp request through the gateway with that token — then asserts that admission control worked. It exists because AGENTS.md calls out that Freebird evolves independently and must be verified against the current verifier API.
+Ad-hoc operational scripts for the Witness workspace. `freebird-witness-smoke.sh` is an end-to-end smoke test that stands up a full **Freebird + Witness** stack — Freebird issuer + verifier, a 3-witness threshold-2 Witness network configured to *require* Freebird tokens, an actual token issuance, and a timestamp request through the gateway with that token — then asserts that admission control worked. `check-generated-drift.sh` is the fail-closed repository-root gate that regenerates and compares the TS schema/types, golden vectors, and OpenAPI output. It exists because AGENTS.md calls out that Freebird evolves independently and generated contracts must remain synchronized.
 
 ## Design
 
 Bash, `set -euo pipefail`. Configurable entirely via environment variables:
+
+The generation-drift gate is intentionally environment-independent: it derives
+the repository root from its own path, runs all generators using repository-
+relative paths, and compares every expected output to `HEAD`.
 
 | Env var | Default | Purpose |
 |---|---|---|

@@ -8,7 +8,7 @@
 
 - Hybrid `[[bin]]` + library crate. `lib.rs` exposes `audit`, `client`, `storage` modules; `main.rs` is a thin clap CLI over them.
 - **Core abstraction**: `Auditor` (audit.rs) — holds `gateway_url`, a `GatewayClient`, and `Storage`. Its `tick()` performs one audit cycle and returns `TickResult::{NoChange, NewSth(SignedTreeHead), Failed}`.
-- **Verification is delegated to `witness-core`** (`verify_signed_tree_head`, `verify_log_consistency`) against the network's `NetworkConfig` fetched from the gateway — the gateway is never trusted for the verdict, only for its own transcript.
+- **Verification is delegated to `witness-core`** (`verify_signed_tree_head`, `verify_log_consistency`) against the network's secret-free `NetworkVerificationConfig` fetched from the gateway — the gateway is never trusted for the verdict, only for its own transcript.
 - **Persistent state** (`storage.rs`, sqlx/SQLite in WAL mode): `audited_sths` keyed by `(gateway_url, tree_size)` holds every successfully verified STH; `audit_failures` is an append-only anomaly log. `FailureType` is an enum serialized as a string so new variants don't require a schema migration.
 - `tick()` checks, in order: fetch latest STH → tree-size regression vs. last accepted → root-hash mismatch at the same tree size → threshold-signature verification → RFC 9162 consistency proof `prev.size → latest.size` → persist. First-ever STH for a gateway is signature-verified then accepted (no consistency check possible).
 - CLI: `check` (one cycle, exit code reflects failure), `watch` (continuous poll loop with configurable interval), `status` (latest STH + recent failures), `history` (recent STHs across gateways).
@@ -23,7 +23,7 @@
 ## Integration
 
 - HTTP client to the gateway's log endpoints: `GET /v1/log/sth`, `GET /v1/log/consistency?first=&second=`, `GET /v1/network` (see `src/codemap.md`).
-- Uses `witness-core` for types (`SignedTreeHead`, `TreeHead`, `LogConsistencyProof`, `NetworkConfig`, `SignedAttestation`) and all verification functions.
+- Uses `witness-core` for types (`SignedTreeHead`, `TreeHead`, `LogConsistencyProof`, `NetworkVerificationConfig`, `SignedAttestation`) and all verification functions.
 - Depends on `sqlx` with the `migrate` feature; the single forward-only migration `migrations/0001_initial_schema.sql` is compiled in and run at startup.
 - Runs standalone (cron-driven `check` or daemonized `watch`); nothing else in the workspace consumes the auditor crate.
-- **Trust note / security-sensitive**: the auditor fetches its own `NetworkConfig` from the gateway it audits, so its trust anchor is the network's public-key set; an attacker controlling both the gateway transcript and the config endpoint could fool the auditor. Independent key distribution (config snapshot at bootstrap) is a hardening direction — flag before changing verification behavior.
+- **Trust note / security-sensitive**: the auditor fetches its own `NetworkVerificationConfig` from the gateway it audits, so its trust anchor is the network's public-key set; an attacker controlling both the gateway transcript and the config endpoint could fool the auditor. Independent key distribution (config snapshot at bootstrap) is a hardening direction — flag before changing verification behavior.

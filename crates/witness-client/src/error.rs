@@ -51,6 +51,15 @@ pub enum Error {
     #[error("websocket error: {0}")]
     WebSocket(String),
 
+    /// The WebSocket server requires authentication, or rejected the supplied
+    /// authentication token.
+    #[error("websocket authentication failed: {0}")]
+    WebSocketAuth(String),
+
+    /// The supplied gateway URL is malformed or uses an unsupported scheme.
+    #[error("invalid gateway URL: {0}")]
+    InvalidUrl(String),
+
     /// Local verification failed (wrapped from `witness_core`).
     #[error("verification failed")]
     Verification(#[from] witness_core::WitnessError),

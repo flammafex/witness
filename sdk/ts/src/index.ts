@@ -10,6 +10,8 @@ export type { PollConfig, FreebirdTokenInput } from './client.js';
 export {
   WitnessError,
   TransportError,
+  TimeoutError,
+  AbortError,
   HttpStatusError,
   NotFoundError,
   JobFailedError,
@@ -19,6 +21,15 @@ export {
   AuthRequiredError,
 } from './errors.js';
 export type { WitnessErrorCode, VerificationFailureReason } from './errors.js';
+
+export {
+  U64_MAX,
+  parseWitnessJson,
+  stringifyWitnessJson,
+  canonicalizeWitnessJson,
+  formatU64,
+  toBigIntU64,
+} from './json.js';
 
 export { subscribeEvents } from './ws.js';
 export type { SubscribeOptions, EventsSubscription } from './ws.js';

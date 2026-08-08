@@ -29,9 +29,10 @@ pub mod types;
 // types
 pub use types::{
     Attestation, AttestationEvent, FreebirdConfig, FreebirdToken, LogInclusionProofResponse,
-    MerkleProofResponse, NetworkConfig, NetworkConfigPublic, SignRequest, SignResponse,
-    SignedAttestation, TimestampRequest, TimestampResponse, VerifyRequest, VerifyResponse,
-    WitnessInfo, WitnessSignature,
+    MerkleProofResponse, NetworkConfig, NetworkConfigPublic, NetworkVerificationConfig,
+    NetworkVerificationWitness, SignRequest, SignResponse, SignedAttestation, TimestampRequest,
+    TimestampResponse, VerificationWitnessInfo, VerifyRequest, VerifyResponse, WitnessInfo,
+    WitnessSignature,
 };
 
 // crypto
@@ -58,8 +59,9 @@ pub use log::{
 pub use federation::{
     verify_cross_anchor, verify_proof_bundle, AttestationBatch, BatchInclusion, CrossAnchor,
     CrossAnchorRequest, CrossAnchorResponse, FederatedAttestation, FederatedVerifyRequest,
-    FederatedVerifyResponse, FederationConfig, PeerNetworkInfo, ProofBundle,
-    ProofBundleVerification, ProofVerificationConfig, VerificationLevel,
+    FederatedVerifyResponse, FederationConfig, FederationVerificationConfig, PeerNetworkInfo,
+    PeerNetworkVerificationInfo, ProofBundle, ProofBundleVerification, ProofVerificationConfig,
+    VerificationFederationConfig, VerificationLevel, VerificationPeerNetworkInfo,
 };
 
 // bls

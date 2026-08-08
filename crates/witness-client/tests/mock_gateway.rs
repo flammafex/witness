@@ -90,7 +90,7 @@ fn sample_network() -> NetworkConfig {
         id: "net".to_string(),
         witnesses: vec![WitnessInfo {
             id: "w1".to_string(),
-            pubkey: "abc".to_string(),
+            pubkey: "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c".to_string(),
             endpoint: "http://localhost:1".to_string(),
             auth_token: None,
         }],
@@ -224,6 +224,35 @@ async fn wait_for_confirmation_timeout() {
 }
 
 #[tokio::test]
+async fn wait_for_confirmation_deadline_covers_slow_http_attempt() {
+    let app = Router::new().route(
+        "/v1/attestations/:hash",
+        get(|| async {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            Json(pending_job())
+        }),
+    );
+    let url = spawn_server(app).await;
+    let client = WitnessClient::new(&url).unwrap();
+    let poll = PollConfig {
+        interval: Duration::from_secs(30),
+        timeout: Duration::from_millis(100),
+        respect_next_attempt_at: false,
+    };
+
+    let started = tokio::time::Instant::now();
+    let err = client.wait_for_confirmation(HASH, poll).await.unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the caller deadline must not wait for the normal 30s request timeout"
+    );
+    assert!(
+        matches!(err, Error::ConfirmationTimeout { .. }),
+        "expected ConfirmationTimeout, got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn wait_for_confirmation_confirmed_without_signatures_is_decode_error() {
     let app = Router::new().route(
         "/v1/attestations/:hash",
@@ -260,7 +289,7 @@ async fn get_anchors_404_is_not_found_not_empty() {
 
 #[tokio::test]
 async fn network_and_network_from_fetch() {
-    let config = sample_network();
+    let config = sample_network().verification_config().unwrap();
     let app = Router::new().route(
         "/v1/network",
         get(move || async move { Json(config.clone()) }),

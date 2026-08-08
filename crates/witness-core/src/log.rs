@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::merkle::{verify_consistency, verify_inclusion};
-use crate::{Attestation, NetworkConfig, Result, SignedAttestation, WitnessError};
+use crate::{Attestation, NetworkVerificationConfig, Result, SignedAttestation, WitnessError};
 
 /// Domain separator for the STH-signing digest.  Bumping the suffix is a
 /// hard fork of the log signature scheme.
@@ -94,12 +94,16 @@ impl SignedTreeHead {
 ///
 /// Returns the number of valid signatures, or an error if any of the
 /// structural checks fail or the threshold isn't met.
-pub fn verify_signed_tree_head(sth: &SignedTreeHead, config: &NetworkConfig) -> Result<usize> {
+pub fn verify_signed_tree_head(
+    sth: &SignedTreeHead,
+    config: &NetworkVerificationConfig,
+) -> Result<usize> {
+    config.validate()?;
     if sth.tree_head.network_id != config.id {
-        return Err(WitnessError::WitnessNotFound(format!(
-            "STH network_id {} != config.id {}",
-            sth.tree_head.network_id, config.id
-        )));
+        return Err(WitnessError::NetworkIdMismatch {
+            expected: config.id.clone(),
+            actual: sth.tree_head.network_id.clone(),
+        });
     }
 
     let expected = sth.tree_head.to_attestation();
@@ -127,7 +131,11 @@ pub struct LogConsistencyProof {
 ///
 /// Both STHs are checked individually against `config`, then RFC 9162
 /// §2.1.4.2 consistency-proof verification is applied to the two roots.
-pub fn verify_log_consistency(proof: &LogConsistencyProof, config: &NetworkConfig) -> Result<()> {
+pub fn verify_log_consistency(
+    proof: &LogConsistencyProof,
+    config: &NetworkVerificationConfig,
+) -> Result<()> {
+    config.validate()?;
     verify_signed_tree_head(&proof.old_sth, config)?;
     verify_signed_tree_head(&proof.new_sth, config)?;
 
@@ -167,7 +175,7 @@ mod tests {
     use super::*;
     use crate::merkle::{consistency_path, hash_leaf, inclusion_path, merkle_tree_hash};
     use crate::signature_scheme::{AttestationSignatures, SignatureScheme};
-    use crate::WitnessInfo;
+    use crate::{NetworkConfig, WitnessInfo};
     use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
 
@@ -225,7 +233,7 @@ mod tests {
         let head = make_head(&cfg, &leaves, 1000);
 
         let sth = sign_sth(&cfg, &key, head);
-        let count = verify_signed_tree_head(&sth, &cfg).unwrap();
+        let count = verify_signed_tree_head(&sth, &cfg.verification_config().unwrap()).unwrap();
         assert_eq!(count, 1);
     }
 
@@ -237,7 +245,7 @@ mod tests {
         let head = make_head(&cfg_a, &leaves, 100);
         let sth = sign_sth(&cfg_a, &key_a, head);
 
-        assert!(verify_signed_tree_head(&sth, &cfg_b).is_err());
+        assert!(verify_signed_tree_head(&sth, &cfg_b.verification_config().unwrap()).is_err());
     }
 
     #[test]
@@ -248,7 +256,7 @@ mod tests {
         let mut sth = sign_sth(&cfg, &key, head);
         sth.tree_head.root_hash = [0xFFu8; 32];
 
-        assert!(verify_signed_tree_head(&sth, &cfg).is_err());
+        assert!(verify_signed_tree_head(&sth, &cfg.verification_config().unwrap()).is_err());
     }
 
     #[test]
@@ -269,7 +277,7 @@ mod tests {
             hashes,
         };
 
-        verify_log_consistency(&proof, &cfg).unwrap();
+        verify_log_consistency(&proof, &cfg.verification_config().unwrap()).unwrap();
     }
 
     #[test]
@@ -294,7 +302,7 @@ mod tests {
             hashes,
         };
 
-        assert!(verify_log_consistency(&proof, &cfg).is_err());
+        assert!(verify_log_consistency(&proof, &cfg.verification_config().unwrap()).is_err());
     }
 
     #[test]
@@ -337,6 +345,6 @@ mod tests {
 
         let json = serde_json::to_string(&proof).unwrap();
         let restored: LogConsistencyProof = serde_json::from_str(&json).unwrap();
-        verify_log_consistency(&restored, &cfg).unwrap();
+        verify_log_consistency(&restored, &cfg.verification_config().unwrap()).unwrap();
     }
 }

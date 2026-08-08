@@ -15,14 +15,14 @@ Scripts assume the workspace root as CWD (`PROJECT_ROOT="$(pwd)"`), `set -e`, an
   - `peer_networks`: the *other two* gateways (`http://localhost:9001/9002/9003`) with `min_witnesses: 2`
   - `cross_anchor_threshold: 2` (batch must be countersigned by 2 of 2 peer networks)
 - **start.sh**: launches all 9 witnesses, then 3 gateways on **9001** (a), **9002** (b), **9003** (c) via a `case` on the network letter, each with its own sqlite db and PID/log files.
-- **demo.sh**: interactive-ish (no `read`), requires gateway 9001; timestamps the same file on Network A and Network B, waits the **60s batch period + 10s** for cross-anchoring, then queries each gateway's `/v1/config` and prints witness count / threshold / `federation.enabled` per network. Closes by explaining the threat model: forging now requires 2-of-3 witnesses in each of A, B, *and* C — 6 witnesses across 3 independent operators.
+- **demo.sh**: interactive-ish (no `read`), requires gateway 9001; attests the same file on Network A and Network B, waits the **60s batch period + 10s** for cross-anchoring, then queries each gateway's `/v1/config` and prints witness count / threshold / `federation.enabled` per network. Closes by explaining the threat model: forging now requires 2-of-3 witnesses in each of A, B, *and* C — 6 witnesses across 3 independent operators.
 - **stop.sh**: PID-based stop for 9 witnesses + 3 gateways (graceful then `-9`), with `pkill -f "witness-gateway.*federation"` / `pkill -f "witness-node.*federation"` fallbacks.
 
 ## Flow
 
 1. `setup.sh` — build binaries, generate 9 keypairs, write 9 witness configs + 3 network configs with mutual `peer_networks`.
 2. `start.sh` — start 9 witnesses (8001–8003 / 8011–8013 / 8021–8023), then gateways 9001/9002/9003; wait for readiness.
-3. `demo.sh` — timestamp on Networks A and B; wait ~70s for the batch period and cross-anchoring; introspect `/v1/config` federation status on all three gateways.
+3. `demo.sh` — attest on Networks A and B; wait ~70s for the batch period and cross-anchoring; introspect `/v1/config` federation status on all three gateways.
 4. `stop.sh` — kill all 12 processes by PID, fallback sweeps.
 
 ## Flow (batch cross-anchoring, per the demo narrative)

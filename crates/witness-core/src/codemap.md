@@ -16,7 +16,7 @@ The source directory implementing `witness-core`: every domain type, cryptograph
 
 - **Entry**: hashes arrive as `TimestampRequest`/`CreateAttestationRequest`; the gateway constructs an `Attestation` (`types.rs`) and dispatches signing to witnesses. `SignRequest`/`SignResponse` are the core-side wire contract.
 - **Signing**: node calls `crypto::sign_attestation` (Ed25519) or `bls::sign_attestation_bls`, collected into `AttestationSignatures` (`signature_scheme.rs`).
-- **Verification**: `crypto::verify_signed_attestation` dispatches on the signature type — per-witness Ed25519 checks with duplicate-signer rejection, or BLS aggregated verification over the signing subset's public keys (`bls::verify_aggregated_signature_bls`) — and enforces `NetworkConfig.threshold`.
+- **Verification**: `crypto::verify_signed_attestation` dispatches on the signature type — per-witness Ed25519 checks with duplicate-signer rejection, or BLS aggregated verification over the signing subset's public keys (`bls::verify_aggregated_signature_bls`) — and enforces the configured verification threshold.
 - **Batching/auditing**: attestation hashes seed `merkle.rs` trees; roots become `AttestationBatch`es, STH `TreeHead`s (`log.rs`), and cross-anchor payloads (`federation.rs`); `verify_proof_bundle` re-assembles and checks the whole chain offline.
 - **Exit**: proofs/attestations serialize to JSON via `serde_hex` adapters and leave the crate as `VerifyResponse`/`ProofBundleVerification`/`SignedTreeHead` payloads.
 
@@ -34,16 +34,16 @@ The source directory implementing `witness-core`: every domain type, cryptograph
 
 ### types.rs
 - **Responsibility:** the domain model — the signed payload, its signature envelope, network config, request/response wire types, and Freebird types. **Security-sensitive: `Attestation::to_bytes()` is the canonical signing message** (`hash ‖ ts ‖ len(network_id) ‖ network_id ‖ sequence`).
-- **Key types/functions:** `Attestation` (`new`, `to_bytes`, `Display`), `WitnessSignature`, `SignedAttestation` (`new`, `new_with_aggregated`, `add_signature`, `signature_count`, `is_aggregated`), `WitnessInfo` (`auth_token` `skip_serializing`), `NetworkConfig::validate` (empty/threshold/BLS-pubkey checks) + `find_witness`, `TimestampRequest`/`TimestampResponse`, `CreateAttestationRequest`, `AttestationJobStatus` (`Pending`/`Retryable`/`Confirmed`/`Failed`), `AttestationJobResponse`, `VerifyRequest`/`VerifyResponse`, `SignRequest`/`SignResponse`, `FreebirdToken`/`FreebirdConfig`.
+- **Key types/functions:** `Attestation` (`new`, `to_bytes`, `Display`), `WitnessSignature`, `SignedAttestation` (`new`, `new_with_aggregated`, `add_signature`, `signature_count`, `is_aggregated`), `WitnessInfo` (`auth_token` `skip_serializing`), `NetworkConfig::validate` (operational config) and `NetworkVerificationConfig::validate` (secret-free trust anchor) + `find_witness`, `TimestampRequest`/`TimestampResponse`, `CreateAttestationRequest`, `AttestationJobStatus` (`Pending`/`Retryable`/`Confirmed`/`Failed`), `AttestationJobResponse`, `VerifyRequest`/`VerifyResponse`, `SignRequest`/`SignResponse`, `FreebirdToken`/`FreebirdConfig`.
 - **Consumed by:** node (SignRequest/SignResponse), gateway (job + SignRequest + Freebird), cli (job + Freebird + SignResponse), and every module in this crate.
 
 ### crypto.rs
-- **Responsibility:** Ed25519 sign/verify primitives and complete signed-attestation verification against a `NetworkConfig`. **Security-sensitive (signing + verification).**
+- **Responsibility:** Ed25519 sign/verify primitives and complete signed-attestation verification against a secret-free `NetworkVerificationConfig`. **Security-sensitive (signing + verification).**
 - **Key functions:** `generate_keypair`, `sign_attestation`, `verify_signature`, `verify_signed_attestation` (dispatches `MultiSig`/Ed25519 and `Aggregated`/BLS branches; rejects duplicate signers via `HashSet`; enforces threshold; returns verified count), `constant_time_eq` (`subtle` ct_eq), `hash_content` (SHA-256), `encode_public_key`/`decode_public_key` (hex ↔ Ed25519).
 - **Consumed by:** node (signing), gateway (verification), cli (offline verification), `log.rs` (STH verification delegates here).
 
 ### bls.rs
-- **Responsibility:** BLS12-381 signing, verification, and aggregation via `blst` min_sig (G2, 96-byte sigs, fixed DST `WITNESS_BLS_SIG_…`). **Security-sensitive (signing + verification + aggregation).**
+- **Responsibility:** BLS12-381 signing, verification, and aggregation via `blst::min_sig` (48-byte compressed G1 signatures, 96-byte compressed G2 public keys, fixed DST `WITNESS_BLS_SIG_…`). **Security-sensitive (signing + verification + aggregation).**
 - **Key functions:** `generate_bls_keypair` (OsRng IKM → `key_gen`, IKM zeroized), `sign_attestation_bls`, `verify_signature_bls`, `aggregate_signatures_bls`, `verify_aggregated_signature_bls` (`AggregatePublicKey` over the signing subset), `encode/decode_bls_public_key`, `encode/decode_bls_secret_key` (zeroize-enabled secret material).
 - **Consumed by:** node (BLS signing + secret-key decode), gateway (aggregation + per-witness verify), `crypto.rs` (BLS branch).
 

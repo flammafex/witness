@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::fs;
-use witness_core::{NetworkConfig, ProofBundle, ProofVerificationConfig};
+use witness_core::{NetworkVerificationConfig, ProofBundle, ProofVerificationConfig};
 
 use witness_client::WitnessClient;
 
@@ -27,7 +27,7 @@ pub async fn run(
     };
 
     // 2. Resolve the home network's config: from file (offline) or fetched (online).
-    let network: NetworkConfig = if let Some(path) = network_config_path {
+    let network: NetworkVerificationConfig = if let Some(path) = network_config_path {
         load_network_config(&path)?
     } else if online {
         let client = WitnessClient::new(gateway_url)?;
@@ -42,7 +42,7 @@ pub async fn run(
     // 3. Resolve peer configs (each --peer-config path) plus, in online mode,
     //    fetch any peer referenced by the bundle's cross-anchors that we don't
     //    already have a local config for.
-    let mut peers: Vec<NetworkConfig> = peer_config_paths
+    let mut peers: Vec<NetworkVerificationConfig> = peer_config_paths
         .iter()
         .map(|p| load_network_config(p))
         .collect::<Result<Vec<_>>>()?;
@@ -163,7 +163,7 @@ pub async fn run(
     Ok(())
 }
 
-fn load_network_config(path: &str) -> Result<NetworkConfig> {
+fn load_network_config(path: &str) -> Result<NetworkVerificationConfig> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read network config: {}", path))?;
     serde_json::from_str(&content)

@@ -20,6 +20,17 @@ jobs:
       - name: Cache Cargo
         uses: https://github.com/Swatinem/rust-cache@v2
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install TypeScript SDK dependencies
+        run: npm ci --prefix sdk/ts
+
+      - name: Check generated artifacts
+        run: ./scripts/check-generated-drift.sh
+
       - name: Format
         run: cargo fmt --all -- --check
 

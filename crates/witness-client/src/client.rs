@@ -7,8 +7,8 @@ use serde::de::{DeserializeOwned, Error as _};
 use witness_core::types::{AttestationJobResponse, AttestationJobStatus, CreateAttestationRequest};
 use witness_core::{
     ExternalAnchorProof, FreebirdToken, LogConsistencyProof, LogInclusionProofResponse,
-    MerkleProofResponse, NetworkConfig, NetworkConfigPublic, ProofBundle, SignedAttestation,
-    SignedTreeHead, VerifyRequest, VerifyResponse,
+    MerkleProofResponse, NetworkConfigPublic, NetworkVerificationConfig, ProofBundle,
+    SignedAttestation, SignedTreeHead, VerifyRequest, VerifyResponse,
 };
 
 use crate::error::{Error, Result};
@@ -192,19 +192,53 @@ impl WitnessClient {
         poll: PollConfig,
     ) -> Result<SignedAttestation> {
         let start = Instant::now();
+        let deadline = start + poll.timeout;
         let mut last_status = AttestationJobStatus::Pending;
 
         loop {
-            let elapsed = start.elapsed();
-            if elapsed >= poll.timeout {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Err(Error::ConfirmationTimeout {
                     hash: Self::hash_path(&hash),
-                    elapsed,
+                    elapsed: start.elapsed(),
                     last_status,
                 });
             }
 
-            let job = self.get_attestation(hash).await?;
+            // The client-wide timeout is only an upper bound for ordinary
+            // requests. Each poll attempt gets the time left on this absolute
+            // deadline so a slow HTTP request cannot restart the polling clock.
+            let req = self
+                .client
+                .get(self.url(&format!("/v1/attestations/{}", Self::hash_path(&hash))));
+            let job: AttestationJobResponse =
+                match tokio::time::timeout(remaining, self.send_json(req.timeout(remaining), true))
+                    .await
+                {
+                    Ok(Ok(job)) => job,
+                    Err(_) => {
+                        return Err(Error::ConfirmationTimeout {
+                            hash: Self::hash_path(&hash),
+                            elapsed: start.elapsed(),
+                            last_status,
+                        })
+                    }
+                    Ok(Err(Error::Transport(error))) if error.is_timeout() => {
+                        return Err(Error::ConfirmationTimeout {
+                            hash: Self::hash_path(&hash),
+                            elapsed: start.elapsed(),
+                            last_status,
+                        })
+                    }
+                    Ok(Err(error)) => return Err(error),
+                };
+            if Instant::now() >= deadline {
+                return Err(Error::ConfirmationTimeout {
+                    hash: Self::hash_path(&hash),
+                    elapsed: start.elapsed(),
+                    last_status,
+                });
+            }
             last_status = job.status;
 
             match job.status {
@@ -226,7 +260,14 @@ impl WitnessClient {
                 AttestationJobStatus::Pending | AttestationJobStatus::Retryable => {}
             }
 
-            let remaining = poll.timeout.saturating_sub(elapsed);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::ConfirmationTimeout {
+                    hash: Self::hash_path(&hash),
+                    elapsed: start.elapsed(),
+                    last_status,
+                });
+            }
             let mut sleep = poll.interval;
             if poll.respect_next_attempt_at {
                 if let Some(next) = job.next_attempt_at {
@@ -241,7 +282,16 @@ impl WitnessClient {
             sleep = sleep.min(remaining);
             #[cfg(feature = "tracing")]
             tracing::debug!(hash = %Self::hash_path(&hash), ?sleep, "polling attestation job");
-            tokio::time::sleep(sleep).await;
+            if tokio::time::timeout(remaining, tokio::time::sleep(sleep))
+                .await
+                .is_err()
+            {
+                return Err(Error::ConfirmationTimeout {
+                    hash: Self::hash_path(&hash),
+                    elapsed: start.elapsed(),
+                    last_status,
+                });
+            }
         }
     }
 
@@ -299,16 +349,16 @@ impl WitnessClient {
         self.send_json(req, true).await
     }
 
-    /// Fetch the full [`NetworkConfig`] (`GET /v1/network`): witness pubkeys,
-    /// threshold, scheme, federation peers. Auth tokens are stripped
-    /// server-side. This is the trust-anchor fetch.
-    pub async fn network(&self) -> Result<NetworkConfig> {
+    /// Fetch the secret-free [`NetworkVerificationConfig`] (`GET /v1/network`):
+    /// witness public keys, threshold, scheme, and public federation policy.
+    /// Operational endpoints, tokens, and provider configuration are excluded.
+    pub async fn network(&self) -> Result<NetworkVerificationConfig> {
         self.network_from(&self.gateway_url).await
     }
 
-    /// Fetch a [`NetworkConfig`] from an arbitrary gateway URL — used to fetch
+    /// Fetch a [`NetworkVerificationConfig`] from an arbitrary gateway URL — used to fetch
     /// peer network configs for cross-anchor (Federated) verification.
-    pub async fn network_from(&self, gateway_url: &str) -> Result<NetworkConfig> {
+    pub async fn network_from(&self, gateway_url: &str) -> Result<NetworkVerificationConfig> {
         let url = format!("{}/v1/network", gateway_url.trim_end_matches('/'));
         let req = self.client.get(url);
         self.send_json(req, true).await

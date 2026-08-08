@@ -4,8 +4,9 @@ The TypeScript SDK for the Witness timestamping network. It provides the full
 client surface, the local verifier, WebSocket support, and a typed error
 hierarchy (spec §6 of `docs/sdk-enhancement-spec.md`).
 
-ESM-first, `fetch` injectable (Node 18+ and browsers), no Node-only APIs in the
-core path.
+ESM-first, `fetch` injectable (Node 22+ and browsers), no Node-only APIs in the
+core path. The package uses the platform WebSocket API directly; Node 22+ is
+required for the Node runtime.
 
 > **Pre-1.0, unaudited, not Byzantine-fault-tolerant.** This project has had no
 > external security audit. Publishing this SDK does **not** constitute a
@@ -16,12 +17,12 @@ core path.
 
 The gateway's answer is **never** trusted for the verdict. The local verifier
 (`WitnessVerifier`) is the **default, trust-minimizing verification path**. It
-pins a caller-supplied `NetworkConfig` and delegates every cryptographic check
+pins a caller-supplied `NetworkVerificationConfig` and delegates every cryptographic check
 to a WASM-compiled `witness-core` module (`crates/witness-core-wasm`) — the
 single trust root (spec §4.3, Path A). No crypto is hand-ported to JS.
 
 Verification is pinned to a config you supply — the verifier never silently
-fetches one. The recommended pattern is to pin a `NetworkConfig` (prefer a
+fetches one. The recommended pattern is to pin a `NetworkVerificationConfig` (prefer a
 `network.json`-derived config checked into your repo) and verify against it:
 
 ```ts
@@ -62,6 +63,23 @@ ready before you call the synchronous `verify*` methods.
 scheme, threshold) and is **not** a trust anchor — it is insufficient for
 verification.
 
+### Network and federation configuration
+
+`network()` / `networkFrom(url)` fetch `/v1/network` as a secret-free
+`NetworkVerificationConfig`. The response contains the network ID, signature
+scheme, threshold, witness IDs/public keys, and public federation peer
+discovery; it does not expose witness endpoints, bearer tokens, or federation
+authentication tokens. Pin this config (or a reviewed `network.json`-derived
+snapshot) before verification. Fetching it from the gateway being verified is
+an explicit TOFU convenience, not an independent trust anchor.
+
+Federation adds independent cross-anchors: a proof can reach `Federated` only
+when the bundle has valid peer signatures and the verifier has the corresponding
+pinned peer `NetworkVerificationConfig`s. The configured peer and
+`cross_anchor_threshold` requirements must be met; unavailable or unconfigured
+peers remain unverified. Federation is an additional durability/independence
+layer, not Byzantine consensus or a guarantee against colluding operators.
+
 ## Client surface
 
 `WitnessClient` is a thin, keyless HTTP client. It performs **no** URL
@@ -87,12 +105,24 @@ the server's `next_attempt_at` hint and clamped to the configured timeout.
 a *known but unbatched* one (200 with `[]`); it does **not** normalize 404 to
 empty.
 
+All SDK protocol JSON goes through the exported lossless codec. Use
+`parseWitnessJson` for raw gateway/WASM JSON and `stringifyWitnessJson` for
+wire output; do not pre-parse protocol JSON with native `JSON.parse`, since it
+can round large u64 values before verification.
+
+Rust `u64` wire fields are generated as `U64 = number | bigint`. Safe integer
+tokens remain ordinary `number`s; exact values above `Number.MAX_SAFE_INTEGER`
+through `u64::MAX` decode as `bigint`. The codec emits bigints as unquoted
+decimal JSON numbers, rejects unsafe JavaScript numbers, and exact query APIs
+such as `sthAtSize`, `consistency`, and `logProof` accept either representation.
+Hashes in request paths and echoed wire fields are canonical lowercase hex.
+
 `FreebirdTokenInput = string | { tokenB64: string }` — a bare string is sugar
 for `{ tokenB64 }`; the SDK always serializes the wire shape `{ "token_b64": ... }`.
 
 ## WitnessVerifier — local verification (WASM, single trust root)
 
-`WitnessVerifier` pins a caller-supplied `NetworkConfig` (and optional peer
+`WitnessVerifier` pins a caller-supplied `NetworkVerificationConfig` (and optional peer
 configs) and delegates every cryptographic check to the WASM-compiled
 `witness-core` module — the single trust root. No crypto is hand-ported to JS.
 
@@ -113,7 +143,10 @@ Failures throw `VerificationError` with a machine-readable `reason`
 `index-size-mismatch`, `ambiguous-signature-encoding`).
 
 The barrel also exports the explicit `decodeAttestationSignatures`
-discriminating decoder (spec §3.5) and `decodeHex`.
+discriminating decoder (spec §3.5) and `decodeHex`. The signature union is
+strictly key-discriminated: `signatures` means multi-sig, while `signature`
+plus `signers` means aggregated BLS; partial, missing, or ambiguous shapes are
+`DecodeError`s rather than implicit JSON-schema union coercions.
 
 ## The `./verify` subpath
 
@@ -130,6 +163,8 @@ with a machine-readable `code` — consumers never string-match on messages:
 | Class | `code` | Meaning |
 |---|---|---|
 | `TransportError` | `transport` | connect/TLS/timeout/abort |
+| `TimeoutError` | `transport` | an individual HTTP operation exceeded its deadline |
+| `AbortError` | `transport` | an operation was cancelled by an `AbortSignal` |
 | `HttpStatusError` | `http` | non-2xx that is not a 404 on a read endpoint |
 | `NotFoundError` | `not_found` | 404 on a read endpoint |
 | `JobFailedError` | `job_failed` | job reached the terminal `failed` state |
@@ -145,8 +180,11 @@ message.
 
 `subscribeEvents(opts)` connects to `/ws/events` and performs the first-message
 auth handshake (`{"type":"auth_required"}` → reply `{"token": ...}` within the
-server's 5s window). A close code of 4001 raises `AuthRequiredError` (no
-auto-retry). Reconnects re-run the handshake with exponential backoff + jitter.
+server's 5s window). A tokenless `auth_required`, or a close code of 4001, raises
+`AuthRequiredError` and stops reconnecting. With a token, the client replies and
+continues; if the server sends an event first, that event is delivered normally.
+Reconnections re-run the handshake with exponential backoff + jitter, and
+`close()`/abort cancels pending reconnect timers.
 
 ## Conformance gate (§4.2)
 
@@ -210,6 +248,28 @@ npm run typecheck   # tsc --noEmit
 - Verification against a config fetched from the same gateway is
   trust-on-first-use; pin `network.json`-derived configs for a stronger anchor.
 - The SDK accepts a caller-supplied gateway URL and performs no URL filtering.
+
+## Publishing
+
+The package is intentionally publishable but remains pre-1.0. Breaking wire,
+crypto, or public API changes bump the minor version; additive `/v1/*` routes
+do not. Publishing does not constitute a security audit or Byzantine-fault
+tolerance. From `sdk/ts/`, the publication gate is:
+
+```sh
+npm install
+(cd ../.. && ./scripts/check-generated-drift.sh)
+npm run build
+npm test
+npm run typecheck
+npm pack --dry-run
+npm publish --access public
+```
+
+`prepublishOnly` runs the build, tests, typecheck, generation-drift gate, and
+pack dry-run again. The
+published package targets Node 22+ and includes `dist/`, this README, and the
+Apache-2.0 `LICENSE`.
 
 ## Status
 

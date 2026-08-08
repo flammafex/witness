@@ -94,10 +94,11 @@ impl BatchManager {
             .storage
             .get_unbatched_attestations(&self.config.id)
             .await?;
+        let verification_config = self.config.verification_config()?;
         let attestations: Vec<_> = candidates
             .into_iter()
             .filter(|attestation| {
-                match witness_core::verify_signed_attestation(attestation, &self.config) {
+                match witness_core::verify_signed_attestation(attestation, &verification_config) {
                     Ok(_) => true,
                     Err(error) => {
                         tracing::error!(
@@ -248,7 +249,8 @@ impl BatchManager {
 
         // Defence in depth: refuse to persist an STH whose signatures don't
         // pass the same verifier clients will use.
-        witness_core::verify_signed_attestation(&signed_attestation, &self.config)?;
+        let verification_config = self.config.verification_config()?;
+        witness_core::verify_signed_attestation(&signed_attestation, &verification_config)?;
 
         let sth = SignedTreeHead {
             tree_head,
@@ -464,7 +466,11 @@ mod tests {
         assert_eq!(sth.tree_head.root_hash, merkle_tree_hash(&leaves));
         assert_eq!(sth.tree_head.timestamp, 12345);
         assert!(
-            witness_core::verify_signed_attestation(&sth.signed_attestation, &config).is_ok(),
+            witness_core::verify_signed_attestation(
+                &sth.signed_attestation,
+                &config.verification_config().unwrap(),
+            )
+            .is_ok(),
             "persisted Ed25519 STH must pass the client-facing verifier"
         );
     }
@@ -506,7 +512,11 @@ mod tests {
         assert_eq!(sth.tree_head.root_hash, merkle_tree_hash(&leaves));
         assert_eq!(sth.tree_head.timestamp, 12345);
         assert!(
-            witness_core::verify_signed_attestation(&sth.signed_attestation, &config).is_ok(),
+            witness_core::verify_signed_attestation(
+                &sth.signed_attestation,
+                &config.verification_config().unwrap(),
+            )
+            .is_ok(),
             "persisted BLS STH must pass the client-facing verifier"
         );
     }

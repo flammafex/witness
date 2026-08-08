@@ -11,6 +11,12 @@ pub enum WitnessError {
     #[error("Invalid public key: {0}")]
     InvalidPublicKey(String),
 
+    #[error("Invalid verification configuration: {0}")]
+    InvalidVerificationConfig(String),
+
+    #[error("Attestation network_id mismatch: expected {expected}, got {actual}")]
+    NetworkIdMismatch { expected: String, actual: String },
+
     #[error("Invalid hash format: {0}")]
     InvalidHash(String),
 

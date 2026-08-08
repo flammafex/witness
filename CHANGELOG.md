@@ -28,6 +28,12 @@ stable API policy is published.
 - **Typegen pipeline**: `schemars` derives on `witness-core` wire types and a
   generator bin (`gen_ts_types`) emitting JSON Schema → TS interfaces, with a
   drift CI gate.
+- **Publishable TypeScript package**: `@witness/sdk` now carries the Apache-2.0
+  license, targets Node 22+, declares scoped-public npm publication metadata,
+  and includes a `npm pack --dry-run` release gate.
+- **Authoritative generation drift gate**: `scripts/check-generated-drift.sh`
+  regenerates the TS schema/types, golden vectors, and OpenAPI document, then
+  fails closed on any diff; CI and TypeScript publication invoke it.
 
 ### Changed
 
@@ -44,6 +50,26 @@ stable API policy is published.
   `tree_size`-vs-STH equality check to both the TS `verifyLogInclusion` and the
   new Rust `verify_log_inclusion` (position-awareness, spec §3.6). SDK minor
   version bumped to 0.8.0.
+- **Wire/config contract:** `/v1/network` is documented as the secret-free
+  `NetworkVerificationConfig`; `/v1/config` remains informational. Federation
+  reaches `Federated` only with valid configured peer cross-anchors and pinned
+  peer verification configs, and is not Byzantine consensus.
+- **TypeScript wire behavior:** Rust `u64` fields are exposed as
+  `number | bigint` through the lossless JSON codec; exact query values are
+  preserved, unsafe numeric inputs are rejected, and echoed/request hashes are
+  canonical lowercase hex. The explicit signature-union decoder rejects
+  partial or ambiguous shapes.
+- **WebSocket behavior:** `auth_required` is recognized in every message
+  position; tokenless challenges raise `AuthRequiredError` without reconnecting,
+  token-authenticated streams continue, first events are accepted when no
+  challenge is sent, and close/abort cancels reconnect timers.
+- **Release documentation:** added the npm publication procedure and dry-run
+  package review to the release checklist. The SDK remains pre-1.0 and
+  unaudited; publishing does not imply security audit or Byzantine-fault
+  tolerance.
+- **BLS documentation:** corrected the `blst::min_sig` orientation throughout
+  the release notes, codemaps, and BLS example: 48-byte G1 signatures and
+  96-byte G2 public keys.
 
 ### Security
 
